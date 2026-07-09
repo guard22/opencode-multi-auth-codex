@@ -10,7 +10,7 @@ export declare const Errors: {
     noEligibleAccounts: (reason?: string) => DeterministicError;
     accountNotFound: (alias: string) => DeterministicError;
     accountDisabled: (alias: string) => DeterministicError;
-    maxRetriesExceeded: (attempts: number, aliasesTried: string[]) => DeterministicError;
+    maxRetriesExceeded: (attempts: number, aliasesTried: string[], details?: Record<string, unknown>) => DeterministicError;
     storeLocked: (reason?: string) => DeterministicError;
     localhostOnly: (host: string) => DeterministicError;
 };

@@ -47,10 +47,14 @@ export const Errors = {
     message: `Account is disabled: ${alias}`,
     details: { alias },
   }),
-  maxRetriesExceeded: (attempts: number, aliasesTried: string[]): DeterministicError => ({
+  maxRetriesExceeded: (
+    attempts: number,
+    aliasesTried: string[],
+    details?: Record<string, unknown>
+  ): DeterministicError => ({
     code: 'MAX_RETRIES_EXCEEDED',
     message: `Exhausted all ${attempts} retry attempts`,
-    details: { attempts, aliasesTried },
+    details: { attempts, aliasesTried, ...details },
   }),
   storeLocked: (reason?: string): DeterministicError => ({
     code: 'STORE_LOCKED',

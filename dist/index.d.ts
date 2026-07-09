@@ -1,5 +1,5 @@
 import type { Plugin } from '@opencode-ai/plugin';
-export declare function isCyberPolicyError(payload: any, fallbackText?: string): boolean;
+export { isCyberPolicyError } from './codex-proxy.js';
 /**
  * Multi-account OAuth plugin for OpenCode
  *
