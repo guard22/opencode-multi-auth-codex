@@ -16,6 +16,9 @@ This index explains which docs are current references vs historical phase snapsh
 4. `codextesting.md`
 - Live/manual test checklist for local verification with Codex/OpenCode.
 
+5. `docs/CUSTOM_API_SERVICE_PRD.md`
+- Fork-specific PRD and implementation plan for turning the OpenCode plugin logic into a reusable API service.
+
 ## Historical phase records (context, not source of truth)
 
 - `docs/QA.md`
@@ -38,3 +41,4 @@ When documents disagree:
 2. Update `docs/ADMIN_MERGE_BRIEF.md` for reviewer-facing deltas.
 3. Update `codextesting.md` if test steps or expected output changed.
 4. Add a short note in `docs/PHASE_H_VALIDATION.md` if validation scope/results changed materially.
+5. Update `docs/CUSTOM_API_SERVICE_PRD.md` when service requirements, implementation status, or integration targets change.
