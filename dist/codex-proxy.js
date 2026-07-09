@@ -107,6 +107,53 @@ export function filterInput(input) {
         return item;
     });
 }
+function normalizeResponsesInput(input) {
+    if (typeof input === 'string') {
+        return [{ role: 'user', content: [{ type: 'input_text', text: input }] }];
+    }
+    if (Array.isArray(input)) {
+        return filterInput(input).map((item) => {
+            if (!item || typeof item !== 'object')
+                return item;
+            const record = item;
+            if (typeof record.content === 'string') {
+                return {
+                    ...record,
+                    content: [{ type: 'input_text', text: record.content }]
+                };
+            }
+            return record;
+        });
+    }
+    return input;
+}
+export function normalizeResponsesTools(tools) {
+    if (!Array.isArray(tools))
+        return tools;
+    return tools
+        .map((tool) => {
+        if (!tool || typeof tool !== 'object')
+            return tool;
+        const record = tool;
+        if (record.type === 'function' && record.function && typeof record.function === 'object') {
+            const fn = record.function;
+            return {
+                type: 'function',
+                name: fn.name,
+                description: fn.description,
+                parameters: fn.parameters,
+                strict: fn.strict
+            };
+        }
+        return record;
+    })
+        .filter((tool) => {
+        if (!tool || typeof tool !== 'object')
+            return true;
+        const record = tool;
+        return record.type !== 'function' || typeof record.name === 'string';
+    });
+}
 export function normalizeModel(model) {
     if (!model)
         return 'gpt-5.1';
@@ -197,20 +244,40 @@ function resolveRateLimitedUntil(rateLimits, headers, errorText, fallbackCooldow
 }
 function parseSseStream(sseText) {
     const lines = sseText.split('\n');
+    let finalResponse = null;
+    let outputText = '';
+    const outputItems = [];
     for (const line of lines) {
         if (!line.startsWith('data: '))
             continue;
         try {
             const data = JSON.parse(line.substring(6));
+            if (data?.type === 'response.output_text.delta' && typeof data.delta === 'string') {
+                outputText += data.delta;
+            }
+            if (data?.type === 'response.output_text.done' && typeof data.text === 'string') {
+                outputText = data.text;
+            }
+            if (data?.type === 'response.output_item.done' && data.item) {
+                outputItems.push(data.item);
+            }
             if (data?.type === 'response.done' || data?.type === 'response.completed') {
-                return data.response;
+                finalResponse = data.response;
             }
         }
         catch {
             // ignore malformed chunks
         }
     }
-    return null;
+    if (!finalResponse || typeof finalResponse !== 'object')
+        return finalResponse;
+    if (outputText && typeof finalResponse.output_text !== 'string') {
+        finalResponse.output_text = outputText;
+    }
+    if (Array.isArray(finalResponse.output) && finalResponse.output.length === 0 && outputItems.length > 0) {
+        finalResponse.output = outputItems;
+    }
+    return finalResponse;
 }
 async function convertSseToJson(response, headers) {
     if (!response.body) {
@@ -318,8 +385,13 @@ export async function handleCodexProxyRequest(input, init, options) {
         const payload = {
             ...body,
             model: normalizedModel,
-            store: false
+            store: false,
+            stream: true
         };
+        delete payload.max_output_tokens;
+        delete payload.max_completion_tokens;
+        delete payload.max_tokens;
+        delete payload.stream_options;
         if (payload.truncation === undefined) {
             const truncationRaw = (process.env.OPENCODE_MULTI_AUTH_TRUNCATION || '').trim();
             if (truncationRaw && truncationRaw !== 'disabled' && truncationRaw !== 'false' && truncationRaw !== '0') {
@@ -327,7 +399,16 @@ export async function handleCodexProxyRequest(input, init, options) {
             }
         }
         if (payload.input) {
-            payload.input = filterInput(payload.input);
+            payload.input = normalizeResponsesInput(payload.input);
+        }
+        if (payload.tools) {
+            payload.tools = normalizeResponsesTools(payload.tools);
+        }
+        if (payload.tool_choice && typeof payload.tool_choice === 'object') {
+            const choice = payload.tool_choice;
+            if (choice.type === 'function' && choice.function?.name) {
+                payload.tool_choice = { type: 'function', name: choice.function.name };
+            }
         }
         if (reasoningMatch?.[1]) {
             payload.reasoning = {

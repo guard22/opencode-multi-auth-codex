@@ -130,9 +130,22 @@ function createHealthPayload(): unknown {
 
 export function chatCompletionsToResponsesPayload(payload: any): Record<string, unknown> {
   const { messages, stream, ...rest } = payload && typeof payload === 'object' ? payload : {}
+  delete rest.max_output_tokens
+  delete rest.max_completion_tokens
+  delete rest.max_tokens
+
   return {
     ...rest,
-    input: Array.isArray(messages) ? messages : [],
+    input: Array.isArray(messages)
+      ? messages.map((message) => {
+          if (!message || typeof message !== 'object') return message
+          if (typeof message.content !== 'string') return message
+          return {
+            ...message,
+            content: [{ type: 'input_text', text: message.content }]
+          }
+        })
+      : [],
     stream: false
   }
 }
@@ -205,6 +218,125 @@ async function writeChatCompletionResponse(
   sendJson(res, upstream.status, responsesPayloadToChatCompletion(payload, fallbackModel))
 }
 
+function writeSseData(res: http.ServerResponse, payload: unknown): void {
+  res.write(`data: ${JSON.stringify(payload)}\n\n`)
+}
+
+async function writeChatCompletionStreamResponse(
+  res: http.ServerResponse,
+  upstream: Response,
+  fallbackModel?: string
+): Promise<void> {
+  if (!upstream.ok) {
+    await writeFetchResponse(res, upstream)
+    return
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive'
+  })
+
+  if (!upstream.body) {
+    res.end('data: [DONE]\n\n')
+    return
+  }
+
+  const reader = upstream.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let responseId = `chatcmpl-${Date.now()}`
+  let model = fallbackModel || 'unknown'
+  let created = Math.floor(Date.now() / 1000)
+  let sentRole = false
+
+  const sendRole = (): void => {
+    if (sentRole) return
+    sentRole = true
+    writeSseData(res, {
+      id: responseId,
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }]
+    })
+  }
+
+  const sendContent = (content: string): void => {
+    sendRole()
+    writeSseData(res, {
+      id: responseId,
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [{ index: 0, delta: { content }, finish_reason: null }]
+    })
+  }
+
+  const finish = (): void => {
+    sendRole()
+    writeSseData(res, {
+      id: responseId,
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+    })
+    res.write('data: [DONE]\n\n')
+    res.end()
+  }
+
+  const handleEvent = (chunk: string): void => {
+    const dataLine = chunk
+      .split('\n')
+      .find((line) => line.startsWith('data: '))
+    if (!dataLine) return
+
+    let data: any
+    try {
+      data = JSON.parse(dataLine.slice(6))
+    } catch {
+      return
+    }
+
+    if (data?.response) {
+      if (typeof data.response.id === 'string') responseId = data.response.id
+      if (typeof data.response.model === 'string') model = data.response.model
+      if (typeof data.response.created_at === 'number') created = Math.floor(data.response.created_at)
+    }
+
+    if (data?.type === 'response.output_text.delta' && typeof data.delta === 'string') {
+      sendContent(data.delta)
+      return
+    }
+
+    if (data?.type === 'response.completed' || data?.type === 'response.done') {
+      finish()
+    }
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const events = buffer.split('\n\n')
+      buffer = events.pop() || ''
+      for (const event of events) {
+        handleEvent(event)
+        if (res.writableEnded) return
+      }
+    }
+
+    if (!res.writableEnded) {
+      finish()
+    }
+  } catch (err) {
+    res.destroy(err instanceof Error ? err : new Error(String(err)))
+  }
+}
+
 export function startApiServer(options?: ApiServerOptions): http.Server {
   const host = options?.host ?? process.env.OPENCODE_MULTI_AUTH_API_HOST ?? DEFAULT_API_HOST
   const portRaw = process.env.OPENCODE_MULTI_AUTH_API_PORT
@@ -269,23 +401,21 @@ export function startApiServer(options?: ApiServerOptions): http.Server {
           }
 
           if (path === '/v1/chat/completions') {
-            if (parsedBody?.stream === true) {
-              sendJson(res, 400, {
-                error: {
-                  code: 'STREAMING_CHAT_COMPLETIONS_UNSUPPORTED',
-                  message: 'Streaming chat completions are not supported yet; use stream=false.'
-                }
-              })
-              return
-            }
-
-            const responsesBody = JSON.stringify(chatCompletionsToResponsesPayload(parsedBody))
+            const stream = parsedBody?.stream === true
+            const responsesBody = JSON.stringify({
+              ...chatCompletionsToResponsesPayload(parsedBody),
+              stream
+            })
             const upstream = await handleCodexProxyRequest('/v1/responses' + requestUrl.search, {
               method: req.method,
               headers: new Headers(req.headers as Record<string, string>),
               body: responsesBody
             }, { config })
-            await writeChatCompletionResponse(res, upstream, parsedBody?.model)
+            if (stream) {
+              await writeChatCompletionStreamResponse(res, upstream, parsedBody?.model)
+            } else {
+              await writeChatCompletionResponse(res, upstream, parsedBody?.model)
+            }
             return
           }
 

@@ -126,10 +126,11 @@ describe('chat completions compatibility', () => {
       model: 'gpt-5.5',
       messages: [{ role: 'user', content: 'hello' }],
       stream: false,
+      max_completion_tokens: 25,
       temperature: 0.2
     })).toEqual({
       model: 'gpt-5.5',
-      input: [{ role: 'user', content: 'hello' }],
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
       stream: false,
       temperature: 0.2
     })

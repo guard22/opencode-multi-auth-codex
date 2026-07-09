@@ -134,6 +134,54 @@ export function filterInput(input: unknown): unknown {
     })
 }
 
+function normalizeResponsesInput(input: unknown): unknown {
+  if (typeof input === 'string') {
+    return [{ role: 'user', content: [{ type: 'input_text', text: input }] }]
+  }
+
+  if (Array.isArray(input)) {
+    return (filterInput(input) as unknown[]).map((item) => {
+      if (!item || typeof item !== 'object') return item
+      const record = item as Record<string, unknown>
+      if (typeof record.content === 'string') {
+        return {
+          ...record,
+          content: [{ type: 'input_text', text: record.content }]
+        }
+      }
+      return record
+    })
+  }
+
+  return input
+}
+
+export function normalizeResponsesTools(tools: unknown): unknown {
+  if (!Array.isArray(tools)) return tools
+
+  return tools
+    .map((tool) => {
+      if (!tool || typeof tool !== 'object') return tool
+      const record = tool as Record<string, any>
+      if (record.type === 'function' && record.function && typeof record.function === 'object') {
+        const fn = record.function as Record<string, unknown>
+        return {
+          type: 'function',
+          name: fn.name,
+          description: fn.description,
+          parameters: fn.parameters,
+          strict: fn.strict
+        }
+      }
+      return record
+    })
+    .filter((tool) => {
+      if (!tool || typeof tool !== 'object') return true
+      const record = tool as Record<string, unknown>
+      return record.type !== 'function' || typeof record.name === 'string'
+    })
+}
+
 export function normalizeModel(model: string | undefined): string {
   if (!model) return 'gpt-5.1'
 
@@ -264,18 +312,46 @@ function resolveRateLimitedUntil(
 
 function parseSseStream(sseText: string): unknown | null {
   const lines = sseText.split('\n')
+  let finalResponse: any = null
+  let outputText = ''
+  const outputItems: unknown[] = []
+
   for (const line of lines) {
     if (!line.startsWith('data: ')) continue
     try {
       const data = JSON.parse(line.substring(6)) as { type?: string; response?: unknown }
+
+      if (data?.type === 'response.output_text.delta' && typeof (data as any).delta === 'string') {
+        outputText += (data as any).delta
+      }
+
+      if (data?.type === 'response.output_text.done' && typeof (data as any).text === 'string') {
+        outputText = (data as any).text
+      }
+
+      if (data?.type === 'response.output_item.done' && (data as any).item) {
+        outputItems.push((data as any).item)
+      }
+
       if (data?.type === 'response.done' || data?.type === 'response.completed') {
-        return data.response
+        finalResponse = data.response
       }
     } catch {
       // ignore malformed chunks
     }
   }
-  return null
+
+  if (!finalResponse || typeof finalResponse !== 'object') return finalResponse
+
+  if (outputText && typeof finalResponse.output_text !== 'string') {
+    finalResponse.output_text = outputText
+  }
+
+  if (Array.isArray(finalResponse.output) && finalResponse.output.length === 0 && outputItems.length > 0) {
+    finalResponse.output = outputItems
+  }
+
+  return finalResponse
 }
 
 async function convertSseToJson(response: Response, headers: Headers): Promise<Response> {
@@ -413,8 +489,14 @@ export async function handleCodexProxyRequest(
     const payload: Record<string, any> = {
       ...body,
       model: normalizedModel,
-      store: false
+      store: false,
+      stream: true
     }
+
+    delete payload.max_output_tokens
+    delete payload.max_completion_tokens
+    delete payload.max_tokens
+    delete payload.stream_options
 
     if (payload.truncation === undefined) {
       const truncationRaw = (process.env.OPENCODE_MULTI_AUTH_TRUNCATION || '').trim()
@@ -424,7 +506,18 @@ export async function handleCodexProxyRequest(
     }
 
     if (payload.input) {
-      payload.input = filterInput(payload.input)
+      payload.input = normalizeResponsesInput(payload.input)
+    }
+
+    if (payload.tools) {
+      payload.tools = normalizeResponsesTools(payload.tools)
+    }
+
+    if (payload.tool_choice && typeof payload.tool_choice === 'object') {
+      const choice = payload.tool_choice as Record<string, any>
+      if (choice.type === 'function' && choice.function?.name) {
+        payload.tool_choice = { type: 'function', name: choice.function.name }
+      }
     }
 
     if (reasoningMatch?.[1]) {

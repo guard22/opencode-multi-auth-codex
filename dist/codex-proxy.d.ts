@@ -7,6 +7,7 @@ export interface CodexProxyOptions {
 export declare function extractPathAndSearch(url: string): string;
 export declare function toCodexBackendUrl(originalUrl: string): string;
 export declare function filterInput(input: unknown): unknown;
+export declare function normalizeResponsesTools(tools: unknown): unknown;
 export declare function normalizeModel(model: string | undefined): string;
 export declare function supportsFastMode(model: string | undefined): boolean;
 export declare function isCyberPolicyError(payload: any, fallbackText?: string): boolean;

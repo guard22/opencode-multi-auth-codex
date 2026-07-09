@@ -6,6 +6,7 @@ import {
   filterInput,
   handleCodexProxyRequest,
   normalizeModel,
+  normalizeResponsesTools,
   supportsFastMode,
   toCodexBackendUrl
 } from '../../src/codex-proxy.js'
@@ -60,10 +61,35 @@ describe('codex proxy helpers', () => {
     ])
   })
 
+  it('leaves non-array inputs unchanged for low-level filtering', () => {
+    expect(filterInput('hello')).toBe('hello')
+  })
+
   it('detects supported fast-mode models', () => {
     expect(supportsFastMode('gpt-5.5')).toBe(true)
     expect(supportsFastMode('gpt-5.4')).toBe(true)
     expect(supportsFastMode('gpt-5.3-codex')).toBe(false)
+  })
+
+  it('normalizes OpenAI function tools for Responses API', () => {
+    expect(normalizeResponsesTools([
+      {
+        type: 'function',
+        function: {
+          name: 'read_file',
+          description: 'Read a file',
+          parameters: { type: 'object' }
+        }
+      }
+    ])).toEqual([
+      {
+        type: 'function',
+        name: 'read_file',
+        description: 'Read a file',
+        parameters: { type: 'object' },
+        strict: undefined
+      }
+    ])
   })
 })
 
