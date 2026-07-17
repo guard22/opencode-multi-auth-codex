@@ -19,6 +19,7 @@ import type { AccountCredentials, RateLimitWindow, LimitsConfidence, RotationSet
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 3434
 const LOCALHOST_HOST_PATTERN = /^(127\.0\.0\.1|::1|localhost)$/i
+const ALLOW_REMOTE_HOST_ENV = 'OPENCODE_MULTI_AUTH_ALLOW_REMOTE_HOST'
 const SYNC_INTERVAL_MS = 3000
 const SYNC_DEBOUNCE_MS = 600
 const ANTIGRAVITY_ACCOUNTS_FILE = path.join(os.homedir(), '.config', 'opencode', 'antigravity-accounts.json')
@@ -85,6 +86,10 @@ type AutoLoginCreateInput = {
 
 export function isLocalhostHost(host: string): boolean {
   return LOCALHOST_HOST_PATTERN.test(host.trim())
+}
+
+export function isWebHostAllowed(host: string): boolean {
+  return isLocalhostHost(host) || process.env[ALLOW_REMOTE_HOST_ENV] === '1'
 }
 
 const execAsync = promisify(exec)
@@ -3283,7 +3288,7 @@ export function startWebConsole(options?: { port?: number; host?: string }): htt
   const host = options?.host || DEFAULT_HOST
   const port = options?.port || DEFAULT_PORT
 
-  if (!isLocalhostHost(host)) {
+  if (!isWebHostAllowed(host)) {
     const err = Errors.localhostOnly(host)
     throw new Error(`${err.code}: ${err.message}`)
   }

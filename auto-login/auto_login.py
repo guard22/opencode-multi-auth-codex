@@ -58,6 +58,8 @@ def find_system_browser():
         "google-chrome-stable",
         "google-chrome",
         "chrome",
+        "chromium",
+        "chromium-browser",
         "microsoft-edge-stable",
         "microsoft-edge",
         "msedge",

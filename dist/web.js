@@ -17,6 +17,7 @@ import { Errors } from './errors.js';
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 3434;
 const LOCALHOST_HOST_PATTERN = /^(127\.0\.0\.1|::1|localhost)$/i;
+const ALLOW_REMOTE_HOST_ENV = 'OPENCODE_MULTI_AUTH_ALLOW_REMOTE_HOST';
 const SYNC_INTERVAL_MS = 3000;
 const SYNC_DEBOUNCE_MS = 600;
 const ANTIGRAVITY_ACCOUNTS_FILE = path.join(os.homedir(), '.config', 'opencode', 'antigravity-accounts.json');
@@ -30,6 +31,9 @@ const DEFAULT_AUTO_LOGIN_CREDENTIALS_FILE = path.join(os.homedir(), '.config', '
 const DEFAULT_AUTO_LOGIN_VENV_PYTHON = path.join(os.homedir(), '.config', 'opencode-multi-auth', '.venv', 'bin', 'python');
 export function isLocalhostHost(host) {
     return LOCALHOST_HOST_PATTERN.test(host.trim());
+}
+export function isWebHostAllowed(host) {
+    return isLocalhostHost(host) || process.env[ALLOW_REMOTE_HOST_ENV] === '1';
 }
 const execAsync = promisify(exec);
 let lastSyncAt = 0;
@@ -3083,7 +3087,7 @@ function startAuthWatcher() {
 export function startWebConsole(options) {
     const host = options?.host || DEFAULT_HOST;
     const port = options?.port || DEFAULT_PORT;
-    if (!isLocalhostHost(host)) {
+    if (!isWebHostAllowed(host)) {
         const err = Errors.localhostOnly(host);
         throw new Error(`${err.code}: ${err.message}`);
     }
