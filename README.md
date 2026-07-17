@@ -160,7 +160,54 @@ Open `http://127.0.0.1:3434`.
 
 ### Docker Compose
 
-Build and start the dashboard from this checkout:
+Account and credential data is bind-mounted from `./data/config`,
+`./data/codex`, and `./data/codex-multi`, so it remains directly accessible on
+the host. Override those locations with `OPENCODE_MULTI_AUTH_CONFIG_DIR`,
+`OPENCODE_MULTI_AUTH_CODEX_DIR`, and
+`OPENCODE_MULTI_AUTH_CODEX_ACCOUNTS_DIR`. Host directories must be writable by
+UID/GID `1000:1000`, which is also the non-root identity used by the container.
+The directories must exist because Compose will not create them automatically.
+On a rootful native Linux Docker Engine without user-namespace remapping,
+prepare their ownership before the first start:
+
+```bash
+sudo chown -R 1000:1000 data
+```
+
+With rootless Docker or user-namespace remapping, grant write access to the
+host UID mapped from container UID 1000 instead, using host ownership or ACLs.
+
+The bind mounts use private SELinux relabeling (`Z`), so custom paths should be
+dedicated to this service.
+
+To encrypt `accounts.json` at rest, set
+`CODEX_SOFT_STORE_PASSPHRASE` for the Compose service through your deployment's
+secret-management mechanism.
+
+The image includes the Codex CLI and the Python, Playwright, and Chromium
+runtime used by limit probes and automated login. The container can reach
+services running on the Docker host through `host.docker.internal`. On native
+Linux, the host service must listen on an address reachable from Docker's
+bridge rather than only `127.0.0.1`.
+
+#### Migrating from named volumes
+
+If you ran the earlier Compose configuration, stop it and copy each old named
+volume into its replacement bind directory before starting this version. Find
+the project prefix with `docker volume ls`, then replace `<project>` below:
+
+```bash
+docker compose down
+docker run --rm -v <project>_app_config:/from:ro -v "$PWD/data/config:/to:Z" alpine cp -a /from/. /to/
+docker run --rm -v <project>_codex_auth:/from:ro -v "$PWD/data/codex:/to:Z" alpine cp -a /from/. /to/
+docker run --rm -v <project>_codex_accounts:/from:ro -v "$PWD/data/codex-multi:/to:Z" alpine cp -a /from/. /to/
+```
+
+Apply the ownership guidance above after copying. Keep the old named volumes
+until the bind-mounted deployment has been verified.
+
+After preparing the directories and migrating any existing data, build and
+start the dashboard:
 
 ```bash
 docker compose up --build -d
@@ -171,15 +218,6 @@ published on host loopback only because the dashboard manages credentials and
 does not provide application-level authentication. Use an SSH tunnel when
 accessing it from another machine; do not publish it directly on a LAN or
 public interface.
-
-Account and credential data is kept in the `app_config`, `codex_auth`, and
-`codex_accounts` named volumes. The container runs as UID/GID `1000:1000` and
-does not run as root. To encrypt `accounts.json` at rest, set
-`CODEX_SOFT_STORE_PASSPHRASE` for the Compose service through your deployment's
-secret-management mechanism.
-
-The image includes the Codex CLI and the Python, Playwright, and Chromium
-runtime used by limit probes and automated login.
 
 ## Automated Bulk Login (Outlook)
 

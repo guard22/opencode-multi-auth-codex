@@ -12,3 +12,4 @@ auto-login/credentials.json
 docs
 tests
 *.md
+/data/
