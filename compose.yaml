@@ -1,0 +1,40 @@
+services:
+  opencode-multi-auth:
+    image: opencode-multi-auth-codex:local
+    build:
+      context: .
+      target: runtime
+    user: "1000:1000"
+    init: true
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:${OPENCODE_MULTI_AUTH_PORT:-3434}:3434"
+      - "127.0.0.1:1455:1455"
+    volumes:
+      - type: bind
+        source: ${OPENCODE_MULTI_AUTH_CONFIG_DIR:-./data/config}
+        target: /home/node/.config
+        bind:
+          create_host_path: false
+          selinux: Z
+      - type: bind
+        source: ${OPENCODE_MULTI_AUTH_CODEX_DIR:-./data/codex}
+        target: /home/node/.codex
+        bind:
+          create_host_path: false
+          selinux: Z
+      - type: bind
+        source: ${OPENCODE_MULTI_AUTH_CODEX_ACCOUNTS_DIR:-./data/codex-multi}
+        target: /home/node/.codex-multi
+        bind:
+          create_host_path: false
+          selinux: Z
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
