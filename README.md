@@ -158,6 +158,29 @@ opencode-multi-auth web --host 127.0.0.1 --port 3434
 
 Open `http://127.0.0.1:3434`.
 
+### Docker Compose
+
+Build and start the dashboard from this checkout:
+
+```bash
+docker compose up --build -d
+```
+
+Open `http://127.0.0.1:3434`. The dashboard and OAuth callback ports are
+published on host loopback only because the dashboard manages credentials and
+does not provide application-level authentication. Use an SSH tunnel when
+accessing it from another machine; do not publish it directly on a LAN or
+public interface.
+
+Account and credential data is kept in the `app_config`, `codex_auth`, and
+`codex_accounts` named volumes. The container runs as UID/GID `1000:1000` and
+does not run as root. To encrypt `accounts.json` at rest, set
+`CODEX_SOFT_STORE_PASSPHRASE` for the Compose service through your deployment's
+secret-management mechanism.
+
+The image includes the Codex CLI and the Python, Playwright, and Chromium
+runtime used by limit probes and automated login.
+
 ## Automated Bulk Login (Outlook)
 
 The `auto-login/` directory contains a standalone Python script that **automates the full OAuth login flow** for multiple Outlook-based ChatGPT accounts. Instead of manually running `opencode-multi-auth add` and clicking through the browser for each account, the script handles everything:
@@ -311,6 +334,7 @@ Outlook login often shows interstitial pages after password entry:
 - `OPENCODE_MULTI_AUTH_CODEX_AUTH_FILE` -> override Codex `auth.json`
 - `CODEX_SOFT_STORE_PASSPHRASE` -> encrypt account store at rest
 - `CODEX_SOFT_LOG_PATH` -> override dashboard log path
+- `OPENCODE_MULTI_AUTH_ALLOW_REMOTE_HOST=1` -> allow a non-loopback bind (intended for containers behind a loopback-published port)
 
 ### Rotation and limits
 
