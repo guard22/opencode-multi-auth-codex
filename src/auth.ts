@@ -23,6 +23,14 @@ function getRedirectUri(port: number): string {
   return `http://localhost:${port}/auth/callback`
 }
 
+function getRedirectPorts(): number[] {
+  const configured = (process.env.OPENCODE_MULTI_AUTH_REDIRECT_PORTS || '')
+    .split(',')
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isInteger(value) && value > 0 && value <= 65535)
+  return configured.length > 0 ? Array.from(new Set(configured)) : DEFAULT_REDIRECT_PORTS
+}
+
 interface TokenResponse {
   access_token: string
   refresh_token?: string
@@ -52,7 +60,7 @@ export interface LoginAccountOptions {
 export async function createAuthorizationFlow(port?: number): Promise<AuthorizationFlow> {
   const pkce = generatePKCE()
   const state = randomBytes(16).toString('hex')
-  const redirectPort = port || DEFAULT_REDIRECT_PORTS[0]
+  const redirectPort = port || getRedirectPorts()[0]
   const redirectUri = getRedirectUri(redirectPort)
   
   const authUrl = new URL(AUTHORIZE_URL)
@@ -108,7 +116,7 @@ export async function loginAccount(
   flow?: AuthorizationFlow,
   options?: LoginAccountOptions
 ): Promise<AccountCredentials> {
-  const ports = DEFAULT_REDIRECT_PORTS
+  const ports = getRedirectPorts()
   let activeFlow = flow
   let server: http.Server | null = null
   const timeoutMs = Math.max(30_000, options?.timeoutMs ?? 5 * 60 * 1000)

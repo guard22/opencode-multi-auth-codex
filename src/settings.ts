@@ -1,4 +1,4 @@
-import { loadStore, saveStore, updateAccount } from './store.js'
+import { loadStore, mutateStore } from './store.js'
 import { logInfo, logError } from './logger.js'
 import {
   DEFAULT_ROTATION_SETTINGS,
@@ -114,11 +114,11 @@ export function updateSettings(
   }
   
   // Save to store
-  const store = loadStore()
-  store.settings = newSettings
-  // Keep legacy field in sync for force-mode compatibility.
-  store.rotationStrategy = newSettings.rotationStrategy
-  saveStore(store)
+  mutateStore((store) => {
+    store.settings = newSettings
+    // Keep legacy field in sync for force-mode compatibility.
+    store.rotationStrategy = newSettings.rotationStrategy
+  })
   
   logInfo(`Settings updated by ${actor}: ${JSON.stringify(updates)}`)
   return { success: true, settings: newSettings }
@@ -126,10 +126,10 @@ export function updateSettings(
 
 // Phase F: Reset settings to defaults
 export function resetSettings(actor: string = 'system'): RotationSettings {
-  const store = loadStore()
-  delete (store as any).settings
-  store.rotationStrategy = DEFAULT_ROTATION_SETTINGS.rotationStrategy
-  saveStore(store)
+  mutateStore((store) => {
+    delete (store as any).settings
+    store.rotationStrategy = DEFAULT_ROTATION_SETTINGS.rotationStrategy
+  })
   
   logInfo(`Settings reset to defaults by ${actor}`)
   return { ...DEFAULT_ROTATION_SETTINGS }

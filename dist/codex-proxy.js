@@ -2,7 +2,7 @@ import { extractRateLimitUpdate, getBlockingRateLimitResetAt, mergeRateLimits, p
 import { getNextAccount, markAuthInvalid, markModelUnsupported, markRateLimited, markWorkspaceDeactivated } from './rotation.js';
 import { getForceState, isForceActive } from './force-mode.js';
 import { getRuntimeSettings } from './settings.js';
-import { loadStore, updateAccount } from './store.js';
+import { loadStore, mutateStore, updateAccountInStore } from './store.js';
 import { DEFAULT_CONFIG } from './types.js';
 import { Errors } from './errors.js';
 const CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -24,6 +24,7 @@ const OPENAI_HEADER_VALUES = {
 const JWT_CLAIM_PATH = 'https://api.openai.com/auth';
 export const DEFAULT_LATEST_CODEX_MODEL = 'gpt-5.5';
 export const DEFAULT_CODEX_BASE_URL = CODEX_BASE_URL;
+let didWarnOutputLimit = false;
 function decodeJWT(token) {
     try {
         const parts = token.split('.');
@@ -301,6 +302,9 @@ async function convertSseToJson(response, headers) {
         });
     }
     const jsonHeaders = new Headers(headers);
+    jsonHeaders.delete('content-encoding');
+    jsonHeaders.delete('content-length');
+    jsonHeaders.delete('transfer-encoding');
     jsonHeaders.set('content-type', 'application/json; charset=utf-8');
     return new Response(JSON.stringify(finalResponse), {
         status: response.status,
@@ -388,6 +392,13 @@ export async function handleCodexProxyRequest(input, init, options) {
             store: false,
             stream: true
         };
+        if (!didWarnOutputLimit &&
+            (payload.max_output_tokens !== undefined ||
+                payload.max_completion_tokens !== undefined ||
+                payload.max_tokens !== undefined)) {
+            didWarnOutputLimit = true;
+            console.warn('[multi-auth] Codex backend does not support output token limits; ignoring the configured limit');
+        }
         delete payload.max_output_tokens;
         delete payload.max_completion_tokens;
         delete payload.max_tokens;
@@ -463,17 +474,19 @@ export async function handleCodexProxyRequest(input, init, options) {
             };
             const applyLimitUpdate = (response) => {
                 const limitUpdate = extractRateLimitUpdate(response.headers);
-                const mergedRateLimits = limitUpdate
-                    ? mergeRateLimits(account.rateLimits, limitUpdate)
-                    : account.rateLimits;
-                if (limitUpdate) {
-                    const blockingResetAt = getBlockingRateLimitResetAt(mergedRateLimits);
-                    updateAccount(account.alias, {
+                if (!limitUpdate)
+                    return loadStore().accounts[account.alias]?.rateLimits;
+                return mutateStore((store) => {
+                    const current = store.accounts[account.alias];
+                    if (!current)
+                        return undefined;
+                    const mergedRateLimits = mergeRateLimits(current.rateLimits, limitUpdate);
+                    updateAccountInStore(store, account.alias, {
                         rateLimits: mergedRateLimits,
-                        rateLimitedUntil: blockingResetAt
+                        rateLimitedUntil: getBlockingRateLimitResetAt(mergedRateLimits)
                     });
-                }
-                return mergedRateLimits;
+                    return mergedRateLimits;
+                }).result;
             };
             let res = await sendPayload(payload);
             let mergedRateLimits = applyLimitUpdate(res);

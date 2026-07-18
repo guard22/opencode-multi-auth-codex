@@ -44,7 +44,7 @@ VOLUME ["/home/node/.config", "/home/node/.codex", "/home/node/.codex-multi"]
 
 USER 1000:1000
 
-EXPOSE 3434 1455
+EXPOSE 3434 3435 1455 1456 1457 1458 1459
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:3434/api/state').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]

@@ -1,14 +1,33 @@
+x-opencode-service: &opencode-service
+  user: "1000:1000"
+  init: true
+  restart: unless-stopped
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  read_only: true
+  tmpfs:
+    - /tmp:mode=1777
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+x-opencode-environment: &opencode-environment
+  CODEX_SOFT_STORE_PASSPHRASE: "${CODEX_SOFT_STORE_PASSPHRASE:-}"
+
+x-opencode-build: &opencode-build
+  context: .
+  target: runtime
+
 services:
   opencode-multi-auth:
+    <<: *opencode-service
     image: opencode-multi-auth-codex:local
-    build:
-      context: .
-      target: runtime
-    user: "1000:1000"
-    init: true
-    restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    build: *opencode-build
+    command: ["node", "dist/cli.js", "web", "--host", "0.0.0.0", "--port", "3434"]
+    environment:
+      <<: *opencode-environment
+      OPENCODE_MULTI_AUTH_REDIRECT_PORTS: "1455"
     ports:
       - "127.0.0.1:${OPENCODE_MULTI_AUTH_PORT:-3434}:3434"
       - "127.0.0.1:1455:1455"
@@ -31,10 +50,42 @@ services:
         bind:
           create_host_path: false
           selinux: Z
-    read_only: true
-    tmpfs:
-      - /tmp:mode=1777
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
+  api:
+    <<: *opencode-service
+    image: opencode-multi-auth-codex-api:local
+    build: *opencode-build
+    command: ["node", "dist/cli.js", "api", "--host", "0.0.0.0", "--port", "3435"]
+    depends_on:
+      opencode-multi-auth:
+        condition: service_healthy
+    environment:
+      <<: *opencode-environment
+      OPENCODE_MULTI_AUTH_ALLOW_REMOTE_API: "1"
+      OPENCODE_MULTI_AUTH_API_KEY: "${OPENCODE_MULTI_AUTH_API_KEY:?Set OPENCODE_MULTI_AUTH_API_KEY in .env}"
+    ports:
+      - "127.0.0.1:${OPENCODE_MULTI_AUTH_API_PORT:-3435}:3435"
+    volumes:
+      - type: bind
+        source: ${OPENCODE_MULTI_AUTH_CONFIG_DIR:-./data/config}
+        target: /home/node/.config
+        bind:
+          create_host_path: false
+          selinux: Z
+      - type: bind
+        source: ${OPENCODE_MULTI_AUTH_CODEX_DIR:-./data/codex}
+        target: /home/node/.codex
+        bind:
+          create_host_path: false
+          selinux: Z
+      - type: bind
+        source: ${OPENCODE_MULTI_AUTH_CODEX_ACCOUNTS_DIR:-./data/codex-multi}
+        target: /home/node/.codex-multi
+        bind:
+          create_host_path: false
+          selinux: Z
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3435/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
