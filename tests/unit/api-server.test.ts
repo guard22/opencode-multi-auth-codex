@@ -331,6 +331,23 @@ describe('chat completions compatibility', () => {
     })
   })
 
+  it('converts assistant history to output content', () => {
+    expect(chatCompletionsToResponsesPayload({
+      model: 'gpt-5.5',
+      messages: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hello back' },
+        { role: 'user', content: 'continue' }
+      ]
+    })).toEqual(expect.objectContaining({
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+        { role: 'assistant', content: [{ type: 'output_text', text: 'hello back' }] },
+        { role: 'user', content: [{ type: 'input_text', text: 'continue' }] }
+      ]
+    }))
+  })
+
   it('converts Responses API payloads to chat-completions payloads', () => {
     expect(responsesPayloadToChatCompletion({
       id: 'resp_123',

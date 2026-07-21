@@ -171,12 +171,13 @@ export function chatCompletionsToResponsesPayload(payload) {
                             output: normalizeToolOutput(message.content)
                         }];
                 }
+                const textContentType = message.role === 'assistant' ? 'output_text' : 'input_text';
                 const content = typeof message.content === 'string'
-                    ? [{ type: 'input_text', text: message.content }]
+                    ? [{ type: textContentType, text: message.content }]
                     : Array.isArray(message.content)
                         ? message.content.map((item) => {
                             if (item?.type === 'text')
-                                return { type: 'input_text', text: item.text };
+                                return { type: textContentType, text: item.text };
                             if (item?.type === 'image_url') {
                                 const imageUrl = typeof item.image_url === 'string' ? item.image_url : item.image_url?.url;
                                 const detail = typeof item.image_url === 'object' ? item.image_url?.detail : undefined;
