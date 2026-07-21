@@ -47,6 +47,6 @@ USER 1000:1000
 EXPOSE 3434 3435 1455 1456 1457 1458 1459
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:3434/api/state').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:3434/api/state').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
 CMD ["node", "dist/cli.js", "web", "--host", "0.0.0.0", "--port", "3434"]
