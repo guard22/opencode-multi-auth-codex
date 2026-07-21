@@ -160,12 +160,6 @@ function createHealthPayload(): unknown {
   }
 }
 
-function hasUnsupportedOutputLimit(payload: any): boolean {
-  return payload?.max_tokens !== undefined ||
-    payload?.max_completion_tokens !== undefined ||
-    payload?.max_output_tokens !== undefined
-}
-
 function normalizeToolOutput(content: unknown): string {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
@@ -576,16 +570,6 @@ export function startApiServer(options?: ApiServerOptions): http.Server {
               error: {
                 code: 'INVALID_JSON',
                 message: 'Invalid JSON payload'
-              }
-            })
-            return
-          }
-
-          if (hasUnsupportedOutputLimit(parsedBody)) {
-            sendJson(res, 400, {
-              error: {
-                code: 'UNSUPPORTED_PARAMETER',
-                message: 'Output token limits are not supported by the Codex backend'
               }
             })
             return

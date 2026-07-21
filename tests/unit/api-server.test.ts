@@ -210,7 +210,9 @@ describe('api server', () => {
     expect(res.body.error.code).toBe('PAYLOAD_TOO_LARGE')
   })
 
-  it('rejects output limits instead of silently ignoring them', async () => {
+  it('allows clients that always send output limits to reach the proxy', async () => {
+    updateAccount('api-test', { expiresAt: Date.now() + 60 * 60_000 })
+
     const res = await request(port, '/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -224,8 +226,8 @@ describe('api server', () => {
       })
     })
 
-    expect(res.status).toBe(400)
-    expect(res.body.error.code).toBe('UNSUPPORTED_PARAMETER')
+    expect(res.status).toBe(401)
+    expect(res.body.error.code).toBe('TOKEN_PARSE_ERROR')
   })
 
   it('requires an API key when starting the server', () => {

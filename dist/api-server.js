@@ -140,11 +140,6 @@ function createHealthPayload() {
         service: 'opencode-multi-auth-api'
     };
 }
-function hasUnsupportedOutputLimit(payload) {
-    return payload?.max_tokens !== undefined ||
-        payload?.max_completion_tokens !== undefined ||
-        payload?.max_output_tokens !== undefined;
-}
 function normalizeToolOutput(content) {
     if (typeof content === 'string')
         return content;
@@ -519,15 +514,6 @@ export function startApiServer(options) {
                             error: {
                                 code: 'INVALID_JSON',
                                 message: 'Invalid JSON payload'
-                            }
-                        });
-                        return;
-                    }
-                    if (hasUnsupportedOutputLimit(parsedBody)) {
-                        sendJson(res, 400, {
-                            error: {
-                                code: 'UNSUPPORTED_PARAMETER',
-                                message: 'Output token limits are not supported by the Codex backend'
                             }
                         });
                         return;
