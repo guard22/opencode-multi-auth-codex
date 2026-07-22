@@ -161,7 +161,6 @@ export interface ProviderModel {
   options: {
     reasoningEffort: string
     reasoningSummary: string
-    textVerbosity: string
     include: string[]
     store: boolean
     service_tier?: string

@@ -7,7 +7,6 @@
       "options": {
         "reasoningEffort": "medium",
         "reasoningSummary": "auto",
-        "textVerbosity": "medium",
         "include": ["reasoning.encrypted_content"],
         "store": false
       }

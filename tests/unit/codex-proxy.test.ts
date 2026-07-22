@@ -10,6 +10,7 @@ import {
   supportsFastMode,
   toCodexBackendUrl
 } from '../../src/codex-proxy.js'
+import { addAccount } from '../../src/store.js'
 import { DEFAULT_CONFIG } from '../../src/types.js'
 
 describe('codex proxy helpers', () => {
@@ -95,6 +96,7 @@ describe('codex proxy helpers', () => {
 
 describe('codex proxy runtime', () => {
   const originalEnv = process.env
+  const originalFetch = global.fetch
   let testDir = ''
   let consoleErrorSpy: jest.SpiedFunction<typeof console.error>
 
@@ -111,6 +113,7 @@ describe('codex proxy runtime', () => {
 
   afterEach(() => {
     consoleErrorSpy.mockRestore()
+    global.fetch = originalFetch
     process.env = originalEnv
     fs.rmSync(testDir, { recursive: true, force: true })
   })
@@ -128,5 +131,45 @@ describe('codex proxy runtime', () => {
         message: 'No available accounts after filtering'
       }
     })
+  })
+
+  it('removes unsupported verbosity options while preserving text formatting', async () => {
+    const claims = Buffer.from(JSON.stringify({
+      'https://api.openai.com/auth': { chatgpt_account_id: 'account-id' }
+    })).toString('base64url')
+    addAccount('test', {
+      accessToken: `header.${claims}.signature`,
+      refreshToken: 'refresh-token',
+      expiresAt: Date.now() + 60 * 60_000
+    })
+
+    let forwardedBody = ''
+    const mockFetch = jest.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      forwardedBody = String(init?.body)
+      return new Response('', {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' }
+      })
+    })
+    global.fetch = mockFetch as typeof fetch
+
+    const response = await handleCodexProxyRequest('/responses', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.5',
+        input: 'hello',
+        stream: true,
+        verbosity: 'medium',
+        text: {
+          verbosity: 'medium',
+          format: { type: 'json_object' }
+        }
+      })
+    }, { config: DEFAULT_CONFIG })
+
+    expect(response.status).toBe(200)
+    const requestBody = JSON.parse(forwardedBody)
+    expect(requestBody).not.toHaveProperty('verbosity')
+    expect(requestBody.text).toEqual({ format: { type: 'json_object' } })
   })
 })

@@ -40,7 +40,6 @@ function buildProviderModel(baseId: string, reasoning: ReasoningLevel): Provider
     options: {
       reasoningEffort: reasoning,
       reasoningSummary: reasoning === 'high' || reasoning === 'xhigh' ? 'detailed' : 'auto',
-      textVerbosity: 'medium',
       include: ['reasoning.encrypted_content'],
       store: false
     }
@@ -71,7 +70,6 @@ function buildFastProviderModel(baseId: string): ProviderModel {
     options: {
       reasoningEffort: 'medium',
       reasoningSummary: 'auto',
-      textVerbosity: 'medium',
       include: ['reasoning.encrypted_content'],
       store: false,
       service_tier: 'priority'

@@ -16,6 +16,7 @@ describe('model defaults', () => {
         })
       })
     )
+    expect(models['gpt-5.5']?.options).not.toHaveProperty('textVerbosity')
     expect(models['gpt-5.5-none']).toBeDefined()
     expect(models['gpt-5.5-low']).toBeDefined()
     expect(models['gpt-5.5-medium']).toBeDefined()

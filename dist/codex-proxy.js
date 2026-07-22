@@ -403,6 +403,13 @@ export async function handleCodexProxyRequest(input, init, options) {
         delete payload.max_completion_tokens;
         delete payload.max_tokens;
         delete payload.stream_options;
+        delete payload.verbosity;
+        if (payload.text && typeof payload.text === 'object' && !Array.isArray(payload.text)) {
+            delete payload.text.verbosity;
+            if (Object.keys(payload.text).length === 0) {
+                delete payload.text;
+            }
+        }
         if (payload.truncation === undefined) {
             const truncationRaw = (process.env.OPENCODE_MULTI_AUTH_TRUNCATION || '').trim();
             if (truncationRaw && truncationRaw !== 'disabled' && truncationRaw !== 'false' && truncationRaw !== '0') {
