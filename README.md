@@ -180,6 +180,10 @@ host UID mapped from container UID 1000 instead, using host ownership or ACLs.
 The bind mounts use private SELinux relabeling (`Z`), so custom paths should be
 dedicated to this service.
 
+If both services are forcibly terminated during a store write and startup later
+reports a stale store lock, stop both services before removing
+`data/config/opencode-multi-auth/accounts.json.lock`.
+
 To encrypt `accounts.json` at rest, set
 `CODEX_SOFT_STORE_PASSPHRASE` for the Compose service through your deployment's
 secret-management mechanism.
@@ -207,7 +211,12 @@ Apply the ownership guidance above after copying. Keep the old named volumes
 until the bind-mounted deployment has been verified.
 
 After preparing the directories and migrating any existing data, build and
-start the dashboard:
+start the dashboard and OpenAI-compatible API. Set a strong API key in `.env`
+first:
+
+```bash
+OPENCODE_MULTI_AUTH_API_KEY=replace-with-a-long-random-value
+```
 
 ```bash
 docker compose up --build -d
@@ -217,7 +226,32 @@ Open `http://127.0.0.1:3434`. The dashboard and OAuth callback ports are
 published on host loopback only because the dashboard manages credentials and
 does not provide application-level authentication. Use an SSH tunnel when
 accessing it from another machine; do not publish it directly on a LAN or
-public interface.
+public interface. OAuth callbacks use port `1455` while a login is pending.
+The container pins `OPENCODE_MULTI_AUTH_REDIRECT_PORTS=1455`; non-container
+launches retain the `1455-1459` fallback range.
+
+The API listens at `http://127.0.0.1:3435` and uses the same account store as
+the dashboard. Send its key as `Authorization: Bearer <key>` or `x-api-key`.
+Override the host ports with `OPENCODE_MULTI_AUTH_PORT` and
+`OPENCODE_MULTI_AUTH_API_PORT`.
+
+### Standalone API service (experimental)
+
+Start an OpenAI-compatible local API service backed by the same multi-account Codex rotation runtime:
+
+```bash
+export OPENCODE_MULTI_AUTH_API_KEY="change-me"
+opencode-multi-auth api --host 127.0.0.1 --port 3435
+```
+
+Endpoints:
+
+- `GET /api/health`
+- `GET /v1/models`
+- `POST /v1/responses`
+- `POST /v1/chat/completions`
+
+Use `Authorization: Bearer $OPENCODE_MULTI_AUTH_API_KEY` for `/v1/*` routes. An API key is always required. Remote binding is additionally blocked unless `OPENCODE_MULTI_AUTH_ALLOW_REMOTE_API=1` is set.
 
 ## Automated Bulk Login (Outlook)
 

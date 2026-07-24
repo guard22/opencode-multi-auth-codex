@@ -164,19 +164,19 @@ Hermes should be able to use the service if it supports an OpenAI-compatible `ba
 
 ### Phase 1: Extract Shared Proxy Runtime
 
-- [ ] Move request transformation helpers from `src/index.ts` to `src/codex-proxy.ts`.
-- [ ] Move account selection, upstream forwarding, retry/fallback, rate-limit marking, and SSE conversion into a reusable function.
-- [ ] Keep `src/index.ts` behavior unchanged by calling the new shared function from the OpenCode plugin `customFetch`.
-- [ ] Add unit tests around model normalization, path rewriting, payload transformation, retry limits, and SSE conversion.
-- [ ] Run `npm run build` and relevant unit tests.
+- [x] Move request transformation helpers from `src/index.ts` to `src/codex-proxy.ts`.
+- [x] Move account selection, upstream forwarding, retry/fallback, rate-limit marking, and SSE conversion into a reusable function.
+- [x] Keep `src/index.ts` behavior unchanged by calling the new shared function from the OpenCode plugin `customFetch`.
+- [x] Add unit tests around model normalization, path rewriting, payload transformation, retry limits, and SSE conversion.
+- [x] Run `npm run build` and relevant unit tests.
 
 ### Phase 2: Add Standalone Inference API
 
-- [ ] Add `src/api-server.ts` with `GET /v1/models`, `POST /v1/responses`, and `POST /v1/chat/completions`.
-- [ ] Add bearer-token auth for `/v1/*` endpoints.
-- [ ] Add deterministic JSON error mapping.
+- [x] Add `src/api-server.ts` with `GET /v1/models`, `POST /v1/responses`, and `POST /v1/chat/completions`.
+- [x] Add bearer-token auth for `/v1/*` endpoints.
+- [x] Add deterministic JSON error mapping.
 - [ ] Add streaming passthrough tests and non-streaming SSE-to-JSON tests.
-- [ ] Add `opencode-multi-auth api --host --port` or `serve` CLI command.
+- [x] Add `opencode-multi-auth api --host --port` or `serve` CLI command.
 
 ### Phase 3: Share Or Consolidate Management API
 
@@ -219,13 +219,18 @@ Hermes should be able to use the service if it supports an OpenAI-compatible `ba
 - [x] Existing account/OAuth/rotation/store modules identified as reusable.
 - [x] Existing dashboard management API identified in `src/web.ts`.
 - [x] Feasibility decision recorded.
-- [ ] Requirements reviewed by repo owner.
-- [ ] Shared proxy runtime implemented.
-- [ ] Standalone inference API implemented.
+- [x] Requirements reviewed by repo owner.
+- [x] Shared proxy runtime implemented.
+- [x] Standalone inference API implemented.
 - [ ] Management route sharing implemented.
 - [ ] OpenCode service-mode docs implemented.
 - [ ] Hermes integration docs implemented.
 - [ ] Deployment hardening implemented.
+
+## Implementation Notes
+
+- 2026-07-10: Added `src/codex-proxy.ts` as the shared Codex proxy runtime and refactored the OpenCode plugin to call it from `customFetch`. Added focused tests in `tests/unit/codex-proxy.test.ts`; verified with `npm run build` and targeted unit tests.
+- 2026-07-10: Added `src/api-server.ts` with `/api/health`, `/v1/models`, `/v1/responses`, and `/v1/chat/completions`; added `opencode-multi-auth api` / `serve` CLI entry points and HTTP-level unit tests in `tests/unit/api-server.test.ts`.
 
 ## Open Questions For Review
 

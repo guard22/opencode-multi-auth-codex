@@ -1,4 +1,4 @@
-import { loadStore, saveStore, updateAccount } from './store.js'
+import { loadStore, mutateStore } from './store.js'
 import type { AccountStore } from './types.js'
 
 export interface ForceState {
@@ -60,87 +60,70 @@ export function activateForce(
   alias: string,
   actor: string = 'system'
 ): { success: boolean; error?: string; state?: ForceState } {
-  const store = loadStore()
-  
-  // Validate alias exists
-  if (!store.accounts[alias]) {
-    return { success: false, error: `Account '${alias}' not found` }
-  }
-  
-  // Validate alias is enabled
-  if (store.accounts[alias].enabled === false) {
-    return { success: false, error: `Account '${alias}' is disabled` }
-  }
-  
-  const now = Date.now()
-  const keepExistingTtl =
-    store.forcedAlias === alias &&
-    typeof store.forcedUntil === 'number' &&
-    store.forcedUntil > now
-  const forcedUntil = keepExistingTtl ? store.forcedUntil! : now + FORCE_TTL_MS
-  
-  const currentStrategy =
-    store.settings?.rotationStrategy ||
-    store.rotationStrategy ||
-    'round-robin'
-
-  // Store previous rotation strategy if not already forcing
-  const previousStrategy = (store.forcedAlias ? store.previousRotationStrategy : currentStrategy) ?? null
-  
-  const newStore: AccountStore = {
-    ...store,
-    forcedAlias: alias,
-    forcedUntil,
-    previousRotationStrategy: previousStrategy,
-    forcedBy: actor
-  }
-  
-  saveStore(newStore)
-  
-  return {
-    success: true,
-    state: {
-      forcedAlias: alias,
-      forcedUntil,
-      previousRotationStrategy: previousStrategy,
-      forcedBy: actor
+  return mutateStore((store) => {
+    if (!store.accounts[alias]) {
+      return { success: false, error: `Account '${alias}' not found` }
     }
-  }
+
+    if (store.accounts[alias].enabled === false) {
+      return { success: false, error: `Account '${alias}' is disabled` }
+    }
+
+    const now = Date.now()
+    const keepExistingTtl =
+      store.forcedAlias === alias &&
+      typeof store.forcedUntil === 'number' &&
+      store.forcedUntil > now
+    const forcedUntil = keepExistingTtl ? store.forcedUntil! : now + FORCE_TTL_MS
+    const currentStrategy =
+      store.settings?.rotationStrategy ||
+      store.rotationStrategy ||
+      'round-robin'
+    const previousStrategy = (store.forcedAlias ? store.previousRotationStrategy : currentStrategy) ?? null
+
+    store.forcedAlias = alias
+    store.forcedUntil = forcedUntil
+    store.previousRotationStrategy = previousStrategy
+    store.forcedBy = actor
+
+    return {
+      success: true,
+      state: {
+        forcedAlias: alias,
+        forcedUntil,
+        previousRotationStrategy: previousStrategy,
+        forcedBy: actor
+      }
+    }
+  }).result
 }
 
 export function clearForce(): { success: boolean; restoredStrategy?: string | null } {
-  const store = loadStore()
-  const restoredStrategy = store.previousRotationStrategy
-  const currentStrategy =
-    store.settings?.rotationStrategy ||
-    store.rotationStrategy ||
-    'round-robin'
-  const nextStrategy = isRotationStrategy(restoredStrategy)
-    ? restoredStrategy
-    : currentStrategy
-  
-  const newStore: AccountStore = {
-    ...store,
-    forcedAlias: null,
-    forcedUntil: null,
-    rotationStrategy: nextStrategy,
-    previousRotationStrategy: null,
-    forcedBy: null
-  }
+  return mutateStore((store) => {
+    const restoredStrategy = store.previousRotationStrategy
+    const currentStrategy =
+      store.settings?.rotationStrategy ||
+      store.rotationStrategy ||
+      'round-robin'
+    const nextStrategy = isRotationStrategy(restoredStrategy)
+      ? restoredStrategy
+      : currentStrategy
 
-  if (store.settings) {
-    newStore.settings = {
-      ...store.settings,
-      rotationStrategy: nextStrategy
+    store.forcedAlias = null
+    store.forcedUntil = null
+    store.rotationStrategy = nextStrategy
+    store.previousRotationStrategy = null
+    store.forcedBy = null
+
+    if (store.settings) {
+      store.settings = {
+        ...store.settings,
+        rotationStrategy: nextStrategy
+      }
     }
-  }
-  
-  saveStore(newStore)
-  
-  return {
-    success: true,
-    restoredStrategy
-  }
+
+    return { success: true, restoredStrategy }
+  }).result
 }
 
 export function checkAndAutoClearForce(): { wasCleared: boolean; reason?: string } {

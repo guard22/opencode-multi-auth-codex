@@ -26,20 +26,100 @@ let lastStoreError = null;
 let lastStoreEncrypted = false;
 let writeLock = false;
 let writeLockQueue = [];
+const FILE_LOCK_TIMEOUT_MS = 10_000;
+const FILE_LOCK_SLEEP_MS = 25;
+const fileLockSleep = new Int32Array(new SharedArrayBuffer(4));
+const STORE_REVISION = Symbol('storeRevision');
+let fileLockDepth = 0;
+let fileLockPath = null;
+let fileLockToken = null;
+function getStoreRevision(data) {
+    return crypto.createHash('sha256').update(data).digest('hex');
+}
+function getCurrentStoreRevision() {
+    const file = getStoreFile();
+    if (!fs.existsSync(file))
+        return 'missing';
+    return getStoreRevision(fs.readFileSync(file));
+}
+function trackStore(store, revision = getCurrentStoreRevision()) {
+    Object.defineProperty(store, STORE_REVISION, {
+        value: revision,
+        writable: true,
+        configurable: true
+    });
+    return store;
+}
 function ensureDir() {
     const dir = getStoreDir();
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
 }
+function acquireFileLock() {
+    if (fileLockDepth > 0) {
+        throw new Error('Nested store mutations are not supported');
+    }
+    ensureDir();
+    const lockPath = `${getStoreFile()}.lock`;
+    const deadline = Date.now() + FILE_LOCK_TIMEOUT_MS;
+    while (true) {
+        try {
+            fs.mkdirSync(lockPath, { mode: 0o700 });
+            const token = crypto.randomUUID();
+            try {
+                fs.writeFileSync(path.join(lockPath, 'owner'), token, { mode: 0o600 });
+            }
+            catch (err) {
+                fs.rmSync(lockPath, { recursive: true, force: true });
+                throw err;
+            }
+            fileLockDepth = 1;
+            fileLockPath = lockPath;
+            fileLockToken = token;
+            return releaseFileLock;
+        }
+        catch (err) {
+            if (err?.code !== 'EEXIST')
+                throw err;
+            if (Date.now() >= deadline) {
+                throw new Error(`Timed out waiting for store lock: ${lockPath}. ` +
+                    'If both services are stopped, remove this stale lock directory manually.');
+            }
+            Atomics.wait(fileLockSleep, 0, 0, FILE_LOCK_SLEEP_MS);
+        }
+    }
+}
+function releaseFileLock() {
+    if (fileLockDepth === 0)
+        return;
+    fileLockDepth -= 1;
+    if (fileLockDepth > 0)
+        return;
+    const lockPath = fileLockPath;
+    const token = fileLockToken;
+    fileLockPath = null;
+    fileLockToken = null;
+    if (!lockPath || !token)
+        return;
+    try {
+        const owner = fs.readFileSync(path.join(lockPath, 'owner'), 'utf-8');
+        if (owner === token) {
+            fs.rmSync(lockPath, { recursive: true, force: true });
+        }
+    }
+    catch {
+        // Do not remove a lock whose ownership cannot be verified.
+    }
+}
 function emptyStore() {
-    return {
+    return trackStore({
         version: CURRENT_STORE_VERSION,
         accounts: {},
         activeAlias: null,
         rotationIndex: 0,
         lastRotation: Date.now()
-    };
+    });
 }
 function getPassphrase() {
     const value = process.env[STORE_ENV_PASSPHRASE];
@@ -153,7 +233,7 @@ function validateStore(data) {
             }
         }
     }
-    return {
+    return trackStore({
         version: typeof data.version === 'number' ? data.version : undefined,
         accounts,
         activeAlias: typeof data.activeAlias === 'string' ? data.activeAlias : null,
@@ -167,7 +247,7 @@ function validateStore(data) {
         // Phase F: Preserve rotation strategy and settings
         rotationStrategy: data.rotationStrategy ?? 'round-robin',
         settings: data.settings ?? undefined
-    };
+    });
 }
 function migrateV1toV2(data) {
     return {
@@ -208,11 +288,38 @@ function saveLastKnownGood(store) {
         return;
     }
     const lkgPath = getLastKnownGoodPath();
+    const tmpPath = `${lkgPath}.tmp-${process.pid}-${crypto.randomUUID()}`;
+    let fd = null;
     try {
-        fs.writeFileSync(lkgPath, JSON.stringify(store, null, 2), { mode: 0o600 });
+        fd = fs.openSync(tmpPath, 'w', 0o600);
+        fs.writeFileSync(fd, JSON.stringify(store, null, 2), { encoding: 'utf-8' });
+        fs.fsyncSync(fd);
+        fs.closeSync(fd);
+        fd = null;
+        fs.renameSync(tmpPath, lkgPath);
+        const dirFd = fs.openSync(path.dirname(lkgPath), 'r');
+        try {
+            fs.fsyncSync(dirFd);
+        }
+        finally {
+            fs.closeSync(dirFd);
+        }
     }
     catch {
-        // ignore
+        if (fd !== null) {
+            try {
+                fs.closeSync(fd);
+            }
+            catch {
+                // ignore
+            }
+        }
+        try {
+            fs.rmSync(tmpPath, { force: true });
+        }
+        catch {
+            // ignore
+        }
     }
 }
 function loadLastKnownGood() {
@@ -304,8 +411,7 @@ export function loadStore() {
                     const decrypted = decryptStore(parsed, passphrase);
                     const validated = validateStore(decrypted);
                     if (validated) {
-                        saveLastKnownGood(validated);
-                        return validated;
+                        return trackStore(validated, getStoreRevision(data));
                     }
                     storeLocked = true;
                     lastStoreError = 'Store validation failed after decryption.';
@@ -325,8 +431,7 @@ export function loadStore() {
             }
             const migrated = migrateStore(parsed);
             if (migrated) {
-                saveLastKnownGood(migrated);
-                return migrated;
+                return trackStore(migrated, getStoreRevision(data));
             }
             storeLocked = true;
             lastStoreError = 'Store validation failed.';
@@ -351,7 +456,7 @@ export function loadStore() {
     }
     return emptyStore();
 }
-export function saveStore(store) {
+function saveStoreUnlocked(store) {
     ensureDir();
     if (storeLocked) {
         console.error('[multi-auth] Store locked; refusing to overwrite encrypted file.');
@@ -435,6 +540,38 @@ export function saveStore(store) {
         // ignore
     }
     saveLastKnownGood(store);
+    store[STORE_REVISION] = getStoreRevision(json);
+}
+export function saveStore(store) {
+    const release = acquireFileLock();
+    try {
+        const expectedRevision = store[STORE_REVISION];
+        if (expectedRevision === undefined) {
+            throw new Error('Cannot save an untracked store; load it with loadStore() first');
+        }
+        if (expectedRevision !== getCurrentStoreRevision()) {
+            throw new Error('Store changed since it was loaded; retry the mutation');
+        }
+        saveStoreUnlocked(store);
+    }
+    finally {
+        release();
+    }
+}
+export function mutateStore(mutator) {
+    const release = acquireFileLock();
+    try {
+        const store = loadStore();
+        const result = mutator(store);
+        if (result && typeof result.then === 'function') {
+            throw new Error('Store mutators must be synchronous');
+        }
+        saveStoreUnlocked(store);
+        return { store, result };
+    }
+    finally {
+        release();
+    }
 }
 export async function withWriteLock(fn) {
     await acquireWriteLock();
@@ -451,36 +588,39 @@ export function getStoreDiagnostics() {
         storeFile: getStoreFile(),
         locked: storeLocked,
         encrypted: lastStoreEncrypted,
+        writeLocked: fs.existsSync(`${getStoreFile()}.lock`),
         error: lastStoreError
     };
 }
 export function addAccount(alias, creds) {
-    const store = loadStore();
-    const entry = buildHistoryEntry(creds.rateLimits);
-    store.accounts[alias] = {
-        ...creds,
-        alias,
-        usageCount: 0,
-        rateLimitHistory: entry ? [entry] : creds.rateLimitHistory
-    };
-    if (!store.activeAlias) {
-        store.activeAlias = alias;
-    }
-    saveStore(store);
-    return store;
+    return mutateStore((store) => {
+        const entry = buildHistoryEntry(creds.rateLimits);
+        store.accounts[alias] = {
+            ...creds,
+            alias,
+            usageCount: 0,
+            rateLimitHistory: entry ? [entry] : creds.rateLimitHistory
+        };
+        if (!store.activeAlias) {
+            store.activeAlias = alias;
+        }
+    }).store;
 }
 export function removeAccount(alias) {
-    const store = loadStore();
-    delete store.accounts[alias];
-    if (store.activeAlias === alias) {
-        const remaining = Object.keys(store.accounts);
-        store.activeAlias = remaining[0] || null;
-    }
-    saveStore(store);
-    return store;
+    return mutateStore((store) => {
+        delete store.accounts[alias];
+        if (store.activeAlias === alias) {
+            const remaining = Object.keys(store.accounts);
+            store.activeAlias = remaining[0] || null;
+        }
+    }).store;
 }
 export function updateAccount(alias, updates) {
-    const store = loadStore();
+    return mutateStore((store) => {
+        updateAccountInStore(store, alias, updates);
+    }).store;
+}
+export function updateAccountInStore(store, alias, updates) {
     if (store.accounts[alias]) {
         const current = store.accounts[alias];
         const next = { ...current, ...updates };
@@ -491,39 +631,36 @@ export function updateAccount(alias, updates) {
             }
         }
         store.accounts[alias] = next;
-        saveStore(store);
     }
-    return store;
 }
 export function setActiveAlias(alias) {
-    const store = loadStore();
-    const now = Date.now();
-    const previousAlias = store.activeAlias;
-    if (alias === null) {
-        store.activeAlias = null;
-    }
-    else if (store.accounts[alias]) {
-        if (previousAlias && previousAlias !== alias && store.accounts[previousAlias]) {
-            store.accounts[previousAlias] = {
-                ...store.accounts[previousAlias],
-                lastActiveUntil: now
+    return mutateStore((store) => {
+        const now = Date.now();
+        const previousAlias = store.activeAlias;
+        if (alias === null) {
+            store.activeAlias = null;
+        }
+        else if (store.accounts[alias]) {
+            if (previousAlias && previousAlias !== alias && store.accounts[previousAlias]) {
+                store.accounts[previousAlias] = {
+                    ...store.accounts[previousAlias],
+                    lastActiveUntil: now
+                };
+            }
+            store.activeAlias = alias;
+            store.accounts[alias] = {
+                ...store.accounts[alias],
+                lastSeenAt: now,
+                lastActiveUntil: undefined
             };
+            const aliases = Object.keys(store.accounts);
+            const idx = aliases.indexOf(alias);
+            if (idx >= 0) {
+                store.rotationIndex = idx;
+            }
+            store.lastRotation = now;
         }
-        store.activeAlias = alias;
-        store.accounts[alias] = {
-            ...store.accounts[alias],
-            lastSeenAt: now,
-            lastActiveUntil: undefined
-        };
-        const aliases = Object.keys(store.accounts);
-        const idx = aliases.indexOf(alias);
-        if (idx >= 0) {
-            store.rotationIndex = idx;
-        }
-        store.lastRotation = now;
-    }
-    saveStore(store);
-    return store;
+    }).store;
 }
 export function getActiveAccount() {
     const store = loadStore();
@@ -540,6 +677,11 @@ export function getStorePath() {
 }
 export function getStoreStatus() {
     const diag = getStoreDiagnostics();
-    return { locked: diag.locked, encrypted: diag.encrypted, error: diag.error };
+    return {
+        locked: diag.locked,
+        encrypted: diag.encrypted,
+        writeLocked: diag.writeLocked,
+        error: diag.error
+    };
 }
 //# sourceMappingURL=store.js.map

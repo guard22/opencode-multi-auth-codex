@@ -108,7 +108,6 @@ Important:
       "options": {
         "reasoningEffort": "medium",
         "reasoningSummary": "auto",
-        "textVerbosity": "medium",
         "include": ["reasoning.encrypted_content"],
         "store": false
       },
@@ -127,7 +126,6 @@ Important:
           "options": {
             "reasoningEffort": "medium",
             "reasoningSummary": "auto",
-            "textVerbosity": "medium",
             "include": ["reasoning.encrypted_content"],
             "store": false
           }
@@ -140,7 +138,6 @@ Important:
           "options": {
             "reasoningEffort": "high",
             "reasoningSummary": "detailed",
-            "textVerbosity": "medium",
             "include": ["reasoning.encrypted_content"],
             "store": false
           }

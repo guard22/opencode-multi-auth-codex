@@ -10,6 +10,7 @@ describe('soak scaffold', () => {
   beforeEach(() => {
     process.env = {
       ...originalEnv,
+      CODEX_SOFT_STORE_PASSPHRASE: '',
       OPENCODE_MULTI_AUTH_STORE_DIR: SOAK_ROOT,
       OPENCODE_MULTI_AUTH_STORE_FILE: path.join(SOAK_ROOT, 'accounts.json')
     }

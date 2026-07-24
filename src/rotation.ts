@@ -1,4 +1,4 @@
-import { getStoreDiagnostics, loadStore, saveStore, updateAccount } from './store.js'
+import { getStoreDiagnostics, loadStore, mutateStore, updateAccount } from './store.js'
 import { ensureValidToken } from './auth.js'
 import { decodeJwtPayload, getPlanTypeFromClaims } from './codex-auth.js'
 import { isForceActive, checkAndAutoClearForce, getForceState, clearForce } from './force-mode.js'
@@ -173,15 +173,18 @@ export async function getNextAccount(
       if (health.isHealthy) {
         const token = await ensureValidToken(forcedAlias)
         if (token) {
-          store = updateAccount(forcedAlias, {
-            usageCount: (forcedAccount.usageCount || 0) + 1,
-            lastUsed: now,
-            limitError: undefined
-          })
-          
-          store.activeAlias = forcedAlias
-          store.lastRotation = now
-          saveStore(store)
+          store = mutateStore((latest) => {
+            const account = latest.accounts[forcedAlias]
+            if (!account) return
+            latest.accounts[forcedAlias] = {
+              ...account,
+              usageCount: (account.usageCount || 0) + 1,
+              lastUsed: now,
+              limitError: undefined
+            }
+            latest.activeAlias = forcedAlias
+            latest.lastRotation = now
+          }).store
           
           console.log(`[multi-auth] Force mode: using ${forcedAlias}`)
           return {
@@ -344,19 +347,22 @@ export async function getNextAccount(
       continue
     }
 
-    store = updateAccount(candidate, {
-      usageCount: (store.accounts[candidate]?.usageCount || 0) + 1,
-      lastUsed: now,
-      limitError: undefined
-    })
-
-    store.activeAlias = candidate
-    store.lastRotation = now
     const nextIndex = primary.aliases.includes(candidate) ? primary.nextIndex : fallback.nextIndex
-    if (nextIndex) {
-      store.rotationIndex = nextIndex(candidate)
-    }
-    saveStore(store)
+    store = mutateStore((latest) => {
+      const account = latest.accounts[candidate]
+      if (!account) return
+      latest.accounts[candidate] = {
+        ...account,
+        usageCount: (account.usageCount || 0) + 1,
+        lastUsed: now,
+        limitError: undefined
+      }
+      latest.activeAlias = candidate
+      latest.lastRotation = now
+      if (nextIndex) {
+        latest.rotationIndex = nextIndex(candidate)
+      }
+    }).store
 
     const currentForceState = getForceState()
     return {

@@ -1,6 +1,8 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import {
   addAccount,
   getStorePath,
@@ -11,11 +13,13 @@ import {
 
 const STRESS_DIR = path.join(os.tmpdir(), 'oma-stress-tests-sandbox')
 const originalEnv = process.env
+const execFileAsync = promisify(execFile)
 
 describe('stress: store consistency', () => {
   beforeEach(() => {
     process.env = {
       ...originalEnv,
+      CODEX_SOFT_STORE_PASSPHRASE: '',
       OPENCODE_MULTI_AUTH_STORE_DIR: STRESS_DIR,
       OPENCODE_MULTI_AUTH_STORE_FILE: path.join(STRESS_DIR, 'accounts.json')
     }
@@ -65,5 +69,30 @@ describe('stress: store consistency', () => {
     const store = loadStore()
     expect(Object.keys(store.accounts)).toHaveLength(5)
     expect(listAccounts()).toHaveLength(5)
+  })
+
+  it('preserves updates from concurrent processes', async () => {
+    const storeModule = new URL('../../dist/store.js', import.meta.url).href
+    const worker = `
+      import { mutateStore } from ${JSON.stringify(storeModule)}
+      for (let i = 0; i < 25; i += 1) {
+        mutateStore((store) => {
+          const account = store.accounts['stress-0']
+          account.usageCount = (account.usageCount || 0) + 1
+        })
+      }
+    `
+    const env = {
+      ...process.env,
+      CODEX_SOFT_STORE_PASSPHRASE: '',
+      OPENCODE_MULTI_AUTH_STORE_DIR: STRESS_DIR,
+      OPENCODE_MULTI_AUTH_STORE_FILE: path.join(STRESS_DIR, 'accounts.json')
+    }
+
+    await Promise.all(Array.from({ length: 4 }, () =>
+      execFileAsync(process.execPath, ['--input-type=module', '--eval', worker], { env })
+    ))
+
+    expect(loadStore().accounts['stress-0'].usageCount).toBe(100)
   })
 })

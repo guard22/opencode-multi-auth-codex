@@ -13,6 +13,13 @@ const SCOPES = ['openid', 'profile', 'email', 'offline_access'];
 function getRedirectUri(port) {
     return `http://localhost:${port}/auth/callback`;
 }
+function getRedirectPorts() {
+    const configured = (process.env.OPENCODE_MULTI_AUTH_REDIRECT_PORTS || '')
+        .split(',')
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isInteger(value) && value > 0 && value <= 65535);
+    return configured.length > 0 ? Array.from(new Set(configured)) : DEFAULT_REDIRECT_PORTS;
+}
 function generatePKCE() {
     const verifier = randomBytes(32).toString('base64url');
     const challenge = createHash('sha256').update(verifier).digest('base64url');
@@ -21,7 +28,7 @@ function generatePKCE() {
 export async function createAuthorizationFlow(port) {
     const pkce = generatePKCE();
     const state = randomBytes(16).toString('hex');
-    const redirectPort = port || DEFAULT_REDIRECT_PORTS[0];
+    const redirectPort = port || getRedirectPorts()[0];
     const redirectUri = getRedirectUri(redirectPort);
     const authUrl = new URL(AUTHORIZE_URL);
     authUrl.searchParams.set('client_id', CLIENT_ID);
@@ -66,7 +73,7 @@ async function findAvailablePort(server, ports) {
     throw new Error(`All ports ${ports.join(', ')} are in use. Stop Codex CLI if running.`);
 }
 export async function loginAccount(alias, flow, options) {
-    const ports = DEFAULT_REDIRECT_PORTS;
+    const ports = getRedirectPorts();
     let activeFlow = flow;
     let server = null;
     const timeoutMs = Math.max(30_000, options?.timeoutMs ?? 5 * 60 * 1000);

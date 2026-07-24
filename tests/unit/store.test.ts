@@ -6,6 +6,7 @@ import {
   saveStore, 
   getStoreDiagnostics,
   withWriteLock,
+  mutateStore,
   addAccount,
   updateAccount,
   removeAccount
@@ -16,6 +17,7 @@ const originalEnv = process.env
 
 function setupEnv() {
   process.env = { ...originalEnv }
+  process.env.CODEX_SOFT_STORE_PASSPHRASE = ''
   process.env.OPENCODE_MULTI_AUTH_STORE_DIR = tmpDir
 }
 
@@ -30,9 +32,14 @@ function cleanup() {
 }
 
 describe('Store Operations', () => {
-  beforeEach(() => setupEnv())
-  afterEach(() => cleanupEnv())
-  afterAll(() => cleanup())
+  beforeEach(() => {
+    cleanup()
+    setupEnv()
+  })
+  afterEach(() => {
+    cleanupEnv()
+    cleanup()
+  })
 
   it('should create empty store when no file exists', () => {
     const store = loadStore()
@@ -118,6 +125,40 @@ describe('Store Operations', () => {
 
     expect(fs.existsSync(lkgPath)).toBe(false)
     delete process.env.CODEX_SOFT_STORE_PASSPHRASE
+  })
+
+  it('rejects stale load-modify-save snapshots', () => {
+    addAccount('test-alias', {
+      accessToken: 'test-access-token',
+      refreshToken: 'test-refresh-token',
+      expiresAt: Date.now() + 3600000
+    })
+    const stale = loadStore()
+    const current = loadStore()
+    current.accounts['test-alias'].notes = 'current'
+    saveStore(current)
+
+    stale.accounts['test-alias'].email = 'stale@example.com'
+    expect(() => saveStore(stale)).toThrow(/changed since it was loaded/)
+  })
+
+  it('rejects nested store mutations without losing updates', () => {
+    addAccount('test-alias', {
+      accessToken: 'test-access-token',
+      refreshToken: 'test-refresh-token',
+      expiresAt: Date.now() + 3600000
+    })
+
+    expect(() => mutateStore(() => {
+      updateAccount('test-alias', { notes: 'nested' })
+    })).toThrow(/Nested store mutations/)
+    expect(loadStore().accounts['test-alias'].notes).toBeUndefined()
+  })
+
+  it('rejects asynchronous store mutators', () => {
+    expect(() => mutateStore(async () => {
+      await Promise.resolve()
+    })).toThrow(/must be synchronous/)
   })
 })
 
