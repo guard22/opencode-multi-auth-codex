@@ -30,8 +30,8 @@ services:
       OPENCODE_MULTI_AUTH_REDIRECT_PORTS: "1455"
       OPENCODE_MULTI_AUTH_REDIRECT_URI: "${OPENCODE_MULTI_AUTH_REDIRECT_URI:-}"
     ports:
-      - "127.0.0.1:${OPENCODE_MULTI_AUTH_PORT:-3434}:3434"
-      - "127.0.0.1:1455:1455"
+      - "${OPENCODE_MULTI_AUTH_PORT:-3434}:3434"
+      - "1455:1455"
     volumes:
       - type: bind
         source: ${OPENCODE_MULTI_AUTH_CONFIG_DIR:-./data/config}
@@ -64,7 +64,7 @@ services:
       OPENCODE_MULTI_AUTH_ALLOW_REMOTE_API: "1"
       OPENCODE_MULTI_AUTH_API_KEY: "${OPENCODE_MULTI_AUTH_API_KEY:?Set OPENCODE_MULTI_AUTH_API_KEY in .env}"
     ports:
-      - "127.0.0.1:${OPENCODE_MULTI_AUTH_API_PORT:-3435}:3435"
+      - "${OPENCODE_MULTI_AUTH_API_PORT:-3435}:3435"
     volumes:
       - type: bind
         source: ${OPENCODE_MULTI_AUTH_CONFIG_DIR:-./data/config}
@@ -90,3 +90,8 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+
+networks:
+  default:
+    external: true
+    name: anstar
