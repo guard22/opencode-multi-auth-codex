@@ -5,7 +5,7 @@ Use this to manually test without touching your live OpenCode/Codex setup.
 ## 1) One-time setup (inside required folder)
 ```bash
 cd /Users/jorgitin/Documents/projects/open_multi_auth
-git clone https://github.com/guard22/opencode-multi-auth-codex.git .
+git clone https://github.com/floze-the-genius/opencode-multi-auth-codex.git .
 npm ci
 npm run build
 ```

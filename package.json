@@ -1,7 +1,7 @@
 {
   "name": "@guard22/opencode-multi-auth-codex",
   "version": "1.4.3",
-  "description": "Multi-account OAuth rotation for OpenAI Codex with auto model discovery",
+  "description": "Local OpenCode account routing, session controls, and reliability tooling for Codex OAuth",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -42,6 +42,9 @@
     "ts-jest": "^29.4.6",
     "typescript": "^5.7.2"
   },
+  "overrides": {
+    "brace-expansion": "5.0.8"
+  },
   "files": [
     "dist",
     "auto-login/auto_login.py",
@@ -52,7 +55,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/guard22/opencode-multi-auth-codex.git"
+    "url": "git+https://github.com/floze-the-genius/opencode-multi-auth-codex.git"
+  },
+  "homepage": "https://github.com/floze-the-genius/opencode-multi-auth-codex#readme",
+  "bugs": {
+    "url": "https://github.com/floze-the-genius/opencode-multi-auth-codex/issues"
   },
   "keywords": [
     "opencode",
@@ -61,6 +68,6 @@
     "oauth",
     "multi-account"
   ],
-  "author": "a3fckx",
+  "author": "Floze",
   "license": "MIT"
 }
