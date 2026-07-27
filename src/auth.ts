@@ -20,7 +20,24 @@ const DEFAULT_REDIRECT_PORTS = [1455, 1456, 1457, 1458, 1459]
 const SCOPES = ['openid', 'profile', 'email', 'offline_access']
 
 function getRedirectUri(port: number): string {
-  return `http://localhost:${port}/auth/callback`
+  const configured = process.env.OPENCODE_MULTI_AUTH_REDIRECT_URI?.trim()
+  if (!configured) return `http://localhost:${port}/auth/callback`
+
+  let redirectUri: URL
+  try {
+    redirectUri = new URL(configured)
+  } catch {
+    throw new Error('OPENCODE_MULTI_AUTH_REDIRECT_URI must be an absolute HTTP(S) URL')
+  }
+
+  if (!['http:', 'https:'].includes(redirectUri.protocol)) {
+    throw new Error('OPENCODE_MULTI_AUTH_REDIRECT_URI must use HTTP or HTTPS')
+  }
+  if (redirectUri.pathname !== '/auth/callback' || redirectUri.search || redirectUri.hash) {
+    throw new Error('OPENCODE_MULTI_AUTH_REDIRECT_URI must end with /auth/callback and have no query or fragment')
+  }
+
+  return redirectUri.toString()
 }
 
 function getRedirectPorts(): number[] {

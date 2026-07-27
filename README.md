@@ -237,6 +237,25 @@ public interface. OAuth callbacks use port `1455` while a login is pending.
 The container pins `OPENCODE_MULTI_AUTH_REDIRECT_PORTS=1455`; non-container
 launches retain the `1455-1459` fallback range.
 
+When the dashboard is behind a reverse proxy, set the exact public callback in
+`.env`:
+
+```bash
+OPENCODE_MULTI_AUTH_REDIRECT_URI=https://dashboard.example.com/auth/callback
+```
+
+Configure the proxy with two upstream routes on the same public host:
+
+- `/auth/callback` to the `opencode-multi-auth` container on port `1455`
+- all other paths to the `opencode-multi-auth` container on port `3434`
+
+The callback route must preserve its query string. The redirect URI setting
+changes only the URI sent to OpenAI; the callback listener still uses
+`OPENCODE_MULTI_AUTH_REDIRECT_PORTS`. If the proxy runs in Docker, attach it to
+the Compose network and use the service name rather than publishing the
+callback port publicly. A `502` on `/auth/callback` when no login is pending is
+expected because the listener exists only during an OAuth login.
+
 The API listens at `http://127.0.0.1:3435` and uses the same account store as
 the dashboard. Send its key as `Authorization: Bearer <key>` or `x-api-key`.
 Override the host ports with `OPENCODE_MULTI_AUTH_PORT` and
