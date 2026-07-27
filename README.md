@@ -1,6 +1,13 @@
 # opencode-multi-auth-codex
 
-Multi-account OAuth rotation plugin for OpenCode with a local dashboard, force mode, weighted settings, limits probing, and reliability hardening.
+Open-source account routing and reliability tooling for OpenCode's Codex OAuth
+integration. It provides local session controls, a localhost dashboard,
+configurable routing, limit visibility, and failure recovery.
+
+[![npm version](https://img.shields.io/npm/v/@guard22/opencode-multi-auth-codex)](https://www.npmjs.com/package/@guard22/opencode-multi-auth-codex)
+[![license](https://img.shields.io/github/license/floze-the-genius/opencode-multi-auth-codex)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/floze-the-genius/opencode-multi-auth-codex)](https://github.com/floze-the-genius/opencode-multi-auth-codex/stargazers)
+
 <img width="1659" height="888" alt="image" src="https://github.com/user-attachments/assets/c72b4d04-be1b-4222-9094-454c2105336f" />
 
 ## Documentation map
@@ -94,19 +101,19 @@ If you prefer config-based installation, OpenCode also supports:
 
 Package:
 - npm: [@guard22/opencode-multi-auth-codex](https://www.npmjs.com/package/@guard22/opencode-multi-auth-codex)
-- repo: [guard22/opencode-multi-auth-codex](https://github.com/guard22/opencode-multi-auth-codex)
+- repo: [floze-the-genius/opencode-multi-auth-codex](https://github.com/floze-the-genius/opencode-multi-auth-codex)
 
 ### GitHub source install (fallback)
 
 Use this if you want the repo head instead of the latest npm release:
 
 ```bash
-opencode plugin github:guard22/opencode-multi-auth-codex --global
+opencode plugin github:floze-the-genius/opencode-multi-auth-codex --global
 ```
 
 ```json
 {
-  "plugin": ["github:guard22/opencode-multi-auth-codex"]
+  "plugin": ["github:floze-the-genius/opencode-multi-auth-codex"]
 }
 ```
 
@@ -129,14 +136,14 @@ export OPENCODE_MULTI_AUTH_INJECT_MODELS=0
 
 Update existing installs:
 - npm install: rerun `opencode plugin @guard22/opencode-multi-auth-codex@latest --global`
-- GitHub install: rerun `opencode plugin github:guard22/opencode-multi-auth-codex --global`
+- GitHub install: rerun `opencode plugin github:floze-the-genius/opencode-multi-auth-codex --global`
 - restart OpenCode after updating the plugin
 - if your install is pinned to a specific tag/commit, bump it explicitly before testing new models
 
 ### From source
 
 ```bash
-git clone https://github.com/guard22/opencode-multi-auth-codex.git
+git clone https://github.com/floze-the-genius/opencode-multi-auth-codex.git
 cd opencode-multi-auth-codex
 npm ci
 npm run build

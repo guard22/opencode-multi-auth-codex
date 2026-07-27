@@ -10,7 +10,7 @@ Primary goal: multi-account Codex linking + rotation that just works.
   - `/Users/jorgitin/Documents/projects/open_multi_auth`
 
 ## 1.2 Baseline and Scope
-- Baseline upstream: `https://github.com/guard22/opencode-multi-auth-codex`
+- Baseline upstream: `https://github.com/floze-the-genius/opencode-multi-auth-codex`
 - This work is a hardening/improvement pass on upstream plus custom behavior changes.
 - Implement in source TypeScript (`src/*`), tests, and docs. Do not hand-edit `dist/*` for release.
 
