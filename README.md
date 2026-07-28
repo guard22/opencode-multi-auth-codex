@@ -238,19 +238,14 @@ The container pins `OPENCODE_MULTI_AUTH_REDIRECT_PORTS=1455`; non-container
 launches retain the `1455-1459` fallback range.
 
 The OpenAI Codex OAuth client accepts only its registered localhost callback;
-a public reverse-proxy URL cannot be used as the redirect URI. When opening
-the dashboard from another machine, start this tunnel on the machine running
-the browser before beginning a manual login:
-
-```bash
-ssh -N -L 1455:127.0.0.1:1455 user@dashboard-server
-```
-
-The browser will return to `http://localhost:1455/auth/callback`, and the SSH
-tunnel forwards that request to the callback listener in the container. Keep
-the tunnel running until authentication completes. Compose publishes port
-`1455` on server loopback only, so it is not exposed to the public network.
-The dashboard itself can continue to use its reverse-proxied HTTPS domain.
+a public reverse-proxy URL cannot be used as the redirect URI. For a dashboard
+opened from another machine, complete the OpenAI login normally. The browser
+will finish at `http://localhost:1455/auth/callback` and may show that it cannot
+connect. Copy the full URL from the browser address bar, return to the pending
+login in the dashboard, paste it into the callback field, and select
+**Complete login**. The dashboard validates the callback state and submits the
+authorization code to the active PKCE flow. The callback URL contains a
+one-time credential, so submit it only to your authenticated dashboard.
 
 The API listens at `http://127.0.0.1:3435` and uses the same account store as
 the dashboard. Send its key as `Authorization: Bearer <key>` or `x-api-key`.

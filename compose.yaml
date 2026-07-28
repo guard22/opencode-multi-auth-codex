@@ -28,8 +28,6 @@ services:
     environment:
       <<: *opencode-environment
       OPENCODE_MULTI_AUTH_REDIRECT_PORTS: "1455"
-    ports:
-      - "127.0.0.1:1455:1455"
     volumes:
       - type: bind
         source: ${OPENCODE_MULTI_AUTH_CONFIG_DIR:-./data/config}

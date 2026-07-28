@@ -113,4 +113,25 @@ describe('web server hardening', () => {
       fs.unwatchFile(getCodexAuthPath())
     }
   })
+
+  it('rejects callback submission when no login is pending', async () => {
+    const port = await getFreePort()
+    const server = startWebConsole({ host: '127.0.0.1', port })
+
+    try {
+      await once(server, 'listening')
+      const response = await fetch(`http://127.0.0.1:${port}/api/auth/callback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          callbackUrl: 'http://localhost:1455/auth/callback?code=test&state=test'
+        })
+      })
+
+      expect(response.status).toBe(409)
+    } finally {
+      await closeServer(server)
+      fs.unwatchFile(getCodexAuthPath())
+    }
+  })
 })
