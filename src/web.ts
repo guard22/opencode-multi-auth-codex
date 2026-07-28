@@ -6,7 +6,13 @@ import * as path from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { exec, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import { createAuthorizationFlow, loginAccount, refreshToken } from './auth.js'
+import {
+  createAuthorizationFlow,
+  loginAccount,
+  refreshToken,
+  validateAuthorizationCallback,
+  type AuthorizationFlow
+} from './auth.js'
 import { getCodexAuthPath, getCodexAuthStatus, getCodexAuthSummary, resolveAliasForCurrentAuth, syncCodexAuthFile, writeCodexAuthForAlias } from './codex-auth.js'
 import { getStoreStatus, listAccounts, loadStore, removeAccount, updateAccount } from './store.js'
 import { getRefreshQueueState, startRefreshQueue, stopRefreshQueue } from './refresh-queue.js'
@@ -44,6 +50,12 @@ type PendingLoginState = {
   step?: string
   output: string[]
   pid?: number
+}
+
+type PendingManualCallback = {
+  alias: string
+  flow: AuthorizationFlow
+  resolve: (callbackUrl: string) => void
 }
 
 type AutoLoginAccountView = {
@@ -99,6 +111,7 @@ let lastSyncError: string | null = null
 let lastSyncAlias: string | null = null
 let syncTimer: NodeJS.Timeout | null = null
 let pendingLogin: PendingLoginState | null = null
+let pendingManualCallback: PendingManualCallback | null = null
 let lastLoginError: string | null = null
 let antigravityQuotaState: AntigravityQuotaState = { status: 'idle', scope: 'active' }
 let antigravityQuotaInFlight: Promise<AntigravityQuotaState> | null = null
@@ -1072,6 +1085,7 @@ const HTML = `<!doctype html>
       let pollIntervalMs = 0
       let createAccountModalOpen = false
       let createAccountTrackedEmail = ''
+      let callbackUrlDraft = ''
       const rotationStrategyHelp = {
         'round-robin': 'Cycle through enabled accounts in order.',
         'least-used': 'Prefer the enabled account with the lowest usage count.',
@@ -1502,14 +1516,52 @@ const HTML = `<!doctype html>
           const manualLink = url
             ? '<a href="' + url + '" target="_blank" rel="noreferrer">Open login manually</a>'
             : ''
+          const callbackForm = state.login.mode === 'manual'
+            ? '<div class="add-row" style="margin-top: 10px;">' +
+              '<input id="callbackUrlInput" placeholder="Paste http://localhost:1455/auth/callback?..." value="' + escapeHtml(callbackUrlDraft) + '" />' +
+              '<button class="secondary" id="submitCallbackBtn">Complete login</button>' +
+              '</div>' +
+              '<div class="notice">If localhost cannot connect, copy the full URL from the browser address bar and paste it here.</div>'
+            : ''
           loginNotice.innerHTML =
             modeLabel + ' in progress for <strong>' + alias + '</strong>' +
             (manualLink ? ' — ' + manualLink : '') +
             emailLine +
             stepLine +
-            logs
+            logs +
+            callbackForm
+
+          const callbackInput = document.getElementById('callbackUrlInput')
+          const submitCallbackBtn = document.getElementById('submitCallbackBtn')
+          if (callbackInput) {
+            callbackInput.addEventListener('input', () => {
+              callbackUrlDraft = callbackInput.value
+            })
+          }
+          if (callbackInput && submitCallbackBtn) {
+            submitCallbackBtn.addEventListener('click', async () => {
+              const callbackUrl = callbackInput.value.trim()
+              if (!callbackUrl) {
+                showToast('Paste the localhost callback URL')
+                return
+              }
+              try {
+                await api('/api/auth/callback', {
+                  method: 'POST',
+                  body: JSON.stringify({ callbackUrl })
+                })
+                callbackUrlDraft = ''
+                showToast('Callback submitted')
+                await refreshState()
+              } catch (err) {
+                const message = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err)
+                showToast(message)
+              }
+            })
+          }
           return
         }
+        callbackUrlDraft = ''
         if (state.lastLoginError) {
           loginNotice.textContent = 'Login error: ' + state.lastLoginError
           return
@@ -2679,17 +2731,22 @@ function startManualLogin(alias: string): Promise<{ ok: true; url: string }> {
   }
 
   return createAuthorizationFlow().then((flow) => {
+    let resolveCallbackUrl: (callbackUrl: string) => void = () => {}
+    const callbackUrl = new Promise<string>((resolve) => {
+      resolveCallbackUrl = resolve
+    })
+    pendingManualCallback = { alias, flow, resolve: resolveCallbackUrl }
     setPendingLogin({
       alias,
       startedAt: Date.now(),
       url: flow.url,
       mode: 'manual',
-      status: 'running',
-      step: 'Waiting for browser login...',
+      status: 'waiting-callback',
+      step: 'Waiting for localhost callback or pasted callback URL...',
       output: []
     })
     lastLoginError = null
-    loginAccount(alias, flow, { timeoutMs: LOGIN_TIMEOUT_MS })
+    loginAccount(alias, flow, { timeoutMs: LOGIN_TIMEOUT_MS, callbackUrl })
       .then(() => {
         logInfo(`Login completed for ${alias}`)
         setPendingLogin(null)
@@ -2698,6 +2755,11 @@ function startManualLogin(alias: string): Promise<{ ok: true; url: string }> {
         lastLoginError = String(err)
         logError(`Login failed for ${alias}: ${err}`)
         setPendingLogin(null)
+      })
+      .finally(() => {
+        if (pendingManualCallback?.alias === alias) {
+          pendingManualCallback = null
+        }
       })
     return { ok: true as const, url: flow.url }
   })
@@ -3392,6 +3454,33 @@ export function startWebConsole(options?: { port?: number; host?: string }): htt
       } catch (err) {
         lastLoginError = String(err)
         sendJson(res, 500, { error: String(err) })
+      }
+      return
+    }
+
+    if (req.method === 'POST' && path === '/api/auth/callback') {
+      const body = await readJsonBody(req)
+      const callbackUrl = typeof body.callbackUrl === 'string' ? body.callbackUrl.trim() : ''
+      if (!callbackUrl) {
+        sendJson(res, 400, { error: 'Missing callback URL' })
+        return
+      }
+      if (!pendingLogin || pendingLogin.mode !== 'manual' || !pendingManualCallback) {
+        sendJson(res, 409, { error: 'No manual login is waiting for a callback' })
+        return
+      }
+      try {
+        validateAuthorizationCallback(pendingManualCallback.flow, callbackUrl)
+        const submission = pendingManualCallback
+        pendingManualCallback = null
+        updatePendingLogin({
+          status: 'running',
+          step: 'Exchanging submitted authorization code...'
+        })
+        submission.resolve(callbackUrl)
+        sendJson(res, 202, { ok: true })
+      } catch (err) {
+        sendJson(res, 400, { error: String(err instanceof Error ? err.message : err) })
       }
       return
     }
