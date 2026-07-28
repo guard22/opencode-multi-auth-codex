@@ -3790,26 +3790,11 @@ export function startWebConsole(options?: { port?: number; host?: string }): htt
           sendJson(res, 409, { error: `Login already in progress for ${pendingLogin.alias}` })
           return
         }
-        const flow = await createAuthorizationFlow()
-        const body = await readJsonBody(req)
-        const actor = body.actor || 'dashboard'
-        
-        loginAccount(alias, flow, { timeoutMs: LOGIN_TIMEOUT_MS })
-          .then(() => {
-            logInfo(`Re-auth completed for ${alias} by ${actor}`)
-            // Update account metadata
-            updateAccount(alias, {
-              lastRefresh: new Date().toISOString()
-            })
-          })
-          .catch((err) => {
-            logError(`Re-auth failed for ${alias}: ${err}`)
-          })
-        
+        const result = await startManualLogin(alias)
         sendJson(res, 200, { 
           ok: true, 
           alias,
-          url: flow.url,
+          url: result.url,
           message: 'OAuth flow started. Complete authentication in the browser.'
         })
       } catch (err) {
