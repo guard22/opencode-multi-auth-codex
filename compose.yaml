@@ -29,9 +29,6 @@ services:
       <<: *opencode-environment
       OPENCODE_MULTI_AUTH_REDIRECT_PORTS: "1455"
       OPENCODE_MULTI_AUTH_REDIRECT_URI: "${OPENCODE_MULTI_AUTH_REDIRECT_URI:-}"
-    ports:
-      - "${OPENCODE_MULTI_AUTH_PORT:-3434}:3434"
-      - "1455:1455"
     volumes:
       - type: bind
         source: ${OPENCODE_MULTI_AUTH_CONFIG_DIR:-./data/config}
@@ -63,8 +60,6 @@ services:
       <<: *opencode-environment
       OPENCODE_MULTI_AUTH_ALLOW_REMOTE_API: "1"
       OPENCODE_MULTI_AUTH_API_KEY: "${OPENCODE_MULTI_AUTH_API_KEY:?Set OPENCODE_MULTI_AUTH_API_KEY in .env}"
-    ports:
-      - "${OPENCODE_MULTI_AUTH_API_PORT:-3435}:3435"
     volumes:
       - type: bind
         source: ${OPENCODE_MULTI_AUTH_CONFIG_DIR:-./data/config}
