@@ -92,6 +92,9 @@ describe('dashboard headless smoke', () => {
       const html = await response.text()
       expect(html).toContain('Paste http://localhost:1455/auth/callback?...')
       expect(html).toContain('/api/auth/callback')
+      expect(html).not.toMatch(/type=["']password["']/i)
+      expect(html).not.toContain('/api/auto-login')
+      expect(html).not.toMatch(/outlook/i)
       const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/)
       expect(scriptMatch).toBeTruthy()
 

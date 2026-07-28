@@ -46,9 +46,7 @@
     "brace-expansion": "5.0.8"
   },
   "files": [
-    "dist",
-    "auto-login/auto_login.py",
-    "auto-login/credentials.example.json"
+    "dist"
   ],
   "publishConfig": {
     "access": "public"

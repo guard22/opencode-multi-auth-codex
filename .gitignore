@@ -7,11 +7,6 @@ node
 .env.*
 !.env.example
 
-# Auto-login
-auto-login/credentials.json
-auto-login/debug_*.png
-auto-login/__pycache__/
-
 # Docker runtime data
 data/config/*
 !data/config/.gitkeep
