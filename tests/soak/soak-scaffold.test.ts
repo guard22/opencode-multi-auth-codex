@@ -30,7 +30,6 @@ describe('soak scaffold', () => {
 
   it('runs sustained update loop without corruption', async () => {
     const durationMs = Number(process.env.OPENCODE_MULTI_AUTH_SOAK_MS || '2000')
-    const startedAt = Date.now()
 
     for (let i = 0; i < 3; i += 1) {
       addAccount(`soak-${i}`, {
@@ -40,6 +39,7 @@ describe('soak scaffold', () => {
       })
     }
 
+    const startedAt = Date.now()
     let iterations = 0
     while (Date.now() - startedAt < durationMs) {
       const alias = `soak-${iterations % 3}`

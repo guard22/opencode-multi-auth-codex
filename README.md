@@ -72,7 +72,6 @@ configurable routing, limit visibility, and failure recovery.
 - `IMPLEMENTATION_PLAN.md` -> full plan and contracts
 - `TEST_EXECUTION_PLAN.md` -> required test order and gates
 - `codextesting.md` -> live testing TODO for Codex CLI sessions
-- `auto-login/` -> Python script for bulk Outlook-based OAuth login
 
 ## Requirements
 
@@ -195,8 +194,7 @@ To encrypt `accounts.json` at rest, set
 `CODEX_SOFT_STORE_PASSPHRASE` for the Compose service through your deployment's
 secret-management mechanism.
 
-The image includes the Codex CLI and the Python, Playwright, and Chromium
-runtime used by limit probes and automated login. The container can reach
+The image includes the Codex CLI and Chromium used by limit probes. The container can reach
 services running on the Docker host through `host.docker.internal`. On native
 Linux, the host service must listen on an address reachable from Docker's
 bridge rather than only `127.0.0.1`.
@@ -269,113 +267,6 @@ Endpoints:
 - `POST /v1/chat/completions`
 
 Use `Authorization: Bearer $OPENCODE_MULTI_AUTH_API_KEY` for `/v1/*` routes. An API key is always required. Remote binding is additionally blocked unless `OPENCODE_MULTI_AUTH_ALLOW_REMOTE_API=1` is set.
-
-## Automated Bulk Login (Outlook)
-
-The `auto-login/` directory contains a standalone Python script that **automates the full OAuth login flow** for multiple Outlook-based ChatGPT accounts. Instead of manually running `opencode-multi-auth add` and clicking through the browser for each account, the script handles everything:
-
-- Opens OpenAI auth page
-- Enters email, requests a one-time login code
-- Logs into Outlook Web to read the verification code
-- Enters the code, clicks through the consent page
-- Captures the OAuth tokens and writes them directly into the plugin store
-
-### Prerequisites
-
-- **Python 3.9+**
-- **Playwright** (Python):
-  ```bash
-  pip install playwright
-  playwright install chromium
-  ```
-- **Outlook.com accounts** linked to ChatGPT (the script reads OTP codes from Outlook Web)
-
-### Setup
-
-1. Copy the example credentials file:
-   ```bash
-   cp auto-login/credentials.example.json auto-login/credentials.json
-   ```
-
-2. Edit `auto-login/credentials.json` with your real accounts:
-   ```json
-   {
-     "defaults": {
-       "chatgpt_password": "SharedPasswordIfAny"
-     },
-     "accounts": [
-       {
-         "id": "acc-1",
-         "email": "your-email@outlook.com",
-         "outlook_password": "your-outlook-password",
-         "chatgpt_password": "your-chatgpt-password",
-         "enabled": true
-       }
-     ]
-   }
-   ```
-
-   - `defaults.chatgpt_password` is used when an account doesn't specify its own.
-   - `outlook_password` is required for reading OTP codes from Outlook inbox.
-   - Set `enabled: false` to skip an account without removing it.
-
-### Usage
-
-```bash
-# Check which accounts need login
-python3 auto-login/auto_login.py --check
-
-# Login all enabled accounts (headless)
-python3 auto-login/auto_login.py
-
-# Login a specific account by index
-python3 auto-login/auto_login.py --account 0
-
-# Login a specific account by email
-python3 auto-login/auto_login.py --email user@outlook.com
-
-# Run with visible browser (for debugging)
-python3 auto-login/auto_login.py --visible
-```
-
-### How it works
-
-```
-OpenAI Auth                    Outlook Web                  Local Server
-    |                              |                            |
-    |  1. Enter email              |                            |
-    |  2. Click "one-time code"    |                            |
-    |  ----sends OTP email-------> |                            |
-    |                              |  3. Login to Outlook       |
-    |                              |  4. Read OTP from inbox    |
-    |  5. Enter OTP code           |                            |
-    |  6. Click Continue (consent) |                            |
-    |  ----redirect callback-----> | ----code via HTTP GET----> |
-    |                              |                            |  7. Capture code
-    |                              |                            |  8. Exchange for tokens
-    |                              |                            |  9. Write to plugin store
-```
-
-The script generates a PKCE challenge identical to the plugin's own OAuth flow, starts a local HTTP server on port `1455` to capture the callback, and writes tokens in the exact v2 store format the plugin expects.
-
-### Microsoft interstitials
-
-Outlook login often shows interstitial pages after password entry:
-
-| Page | Handled by |
-|------|-----------|
-| "Stay signed in?" | Auto-clicks "Yes" |
-| "Let's protect your account" | Auto-clicks "Skip for now" |
-| FIDO/Passkey creation (`/fido/create`) | Auto-clicks "Not now" / "Cancel" |
-| Any other blocker | Force-navigates to inbox |
-
-### Troubleshooting
-
-- **`--visible` mode** shows the browser so you can see exactly where the flow gets stuck.
-- **Debug screenshots** are saved as `auto-login/debug_<user>_<step>.png` on failure.
-- **SSL errors on macOS**: the script uses `ssl._create_unverified_context()` for token exchange requests. This is safe for local automation.
-- **Port 1455 in use**: kill any process using that port, or change `REDIRECT_PORT` in the script.
-- **Stale OTP codes**: if the inbox has old verification emails, the script may pick up an expired code. Clear the inbox or wait for a fresh email.
 
 ## CLI commands
 

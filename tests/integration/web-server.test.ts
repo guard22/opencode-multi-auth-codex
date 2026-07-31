@@ -139,6 +139,25 @@ describe('web server hardening', () => {
     }
   })
 
+  it('does not expose the removed credential login endpoint', async () => {
+    const port = await getFreePort()
+    const server = startWebConsole({ host: '127.0.0.1', port })
+
+    try {
+      await once(server, 'listening')
+      const response = await fetch(`http://127.0.0.1:${port}/api/auto-login/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'user@example.com', password: 'secret' })
+      })
+
+      expect(response.status).toBe(404)
+    } finally {
+      await closeServer(server)
+      fs.unwatchFile(getCodexAuthPath())
+    }
+  })
+
   it('completes both auth and re-auth through callback submission', async () => {
     const port = await getFreePort()
     const callbackPort = await getFreePort()

@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
 import * as http from 'http';
-import * as url from 'url';
 import { addAccount, updateAccount, loadStore } from './store.js';
 import { clearAuthInvalid } from './rotation.js';
 import { decodeJwtPayload, getAccountIdFromClaims, getEmailFromClaims, getExpiryFromClaims, getPlanTypeFromClaims } from './codex-auth.js';
@@ -72,6 +71,83 @@ async function findAvailablePort(server, ports) {
     }
     throw new Error(`All ports ${ports.join(', ')} are in use. Stop Codex CLI if running.`);
 }
+export function validateAuthorizationCallback(flow, callbackUrl) {
+    let parsed;
+    try {
+        parsed = new URL(callbackUrl);
+    }
+    catch {
+        throw new Error('Callback must be the full localhost URL from the browser');
+    }
+    const expected = new URL(flow.redirectUri);
+    if (parsed.origin !== expected.origin || parsed.pathname !== expected.pathname) {
+        throw new Error(`Callback must start with ${flow.redirectUri}`);
+    }
+    const code = parsed.searchParams.get('code');
+    if (!code)
+        throw new Error('Callback URL has no authorization code');
+    if (parsed.searchParams.get('state') !== flow.state) {
+        throw new Error('Callback URL has an invalid state');
+    }
+    return code;
+}
+async function completeAuthorizationCallback(alias, flow, callbackUrl) {
+    const code = validateAuthorizationCallback(flow, callbackUrl);
+    const tokenRes = await fetch(TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            client_id: CLIENT_ID,
+            code,
+            code_verifier: flow.pkce.verifier,
+            redirect_uri: flow.redirectUri
+        })
+    });
+    if (!tokenRes.ok) {
+        throw new Error(`Token exchange failed: ${tokenRes.status}`);
+    }
+    const tokens = (await tokenRes.json());
+    if (!tokens.refresh_token) {
+        throw new Error('Token exchange did not return a refresh_token');
+    }
+    const now = Date.now();
+    const accessClaims = decodeJwtPayload(tokens.access_token);
+    const idClaims = tokens.id_token ? decodeJwtPayload(tokens.id_token) : null;
+    const expiresAt = getExpiryFromClaims(accessClaims) || getExpiryFromClaims(idClaims) || now + tokens.expires_in * 1000;
+    let email = getEmailFromClaims(idClaims) || getEmailFromClaims(accessClaims);
+    try {
+        const userRes = await fetch(`${OPENAI_ISSUER}/userinfo`, {
+            headers: { Authorization: `Bearer ${tokens.access_token}` }
+        });
+        if (userRes.ok) {
+            const user = (await userRes.json());
+            email = user.email || email;
+        }
+    }
+    catch {
+        /* user info fetch is non-critical */
+    }
+    const accountId = getAccountIdFromClaims(idClaims) ||
+        getAccountIdFromClaims(accessClaims);
+    const planType = getPlanTypeFromClaims(idClaims) ||
+        getPlanTypeFromClaims(accessClaims);
+    const store = addAccount(alias, {
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        idToken: tokens.id_token,
+        accountId,
+        planType,
+        expiresAt,
+        email,
+        lastRefresh: new Date(now).toISOString(),
+        lastSeenAt: now,
+        source: 'opencode',
+        authInvalid: false,
+        authInvalidatedAt: undefined
+    });
+    return store.accounts[alias];
+}
 export async function loginAccount(alias, flow, options) {
     const ports = getRedirectPorts();
     let activeFlow = flow;
@@ -79,6 +155,7 @@ export async function loginAccount(alias, flow, options) {
     const timeoutMs = Math.max(30_000, options?.timeoutMs ?? 5 * 60 * 1000);
     return new Promise(async (resolve, reject) => {
         let finished = false;
+        let callbackInFlight = false;
         let timeout = null;
         const cleanup = () => {
             if (timeout) {
@@ -97,6 +174,13 @@ export async function loginAccount(alias, flow, options) {
             cleanup();
             fn();
         };
+        const processCallback = async (callbackUrl) => {
+            if (finished || callbackInFlight || !activeFlow) {
+                throw new Error('Authorization callback is no longer pending');
+            }
+            callbackInFlight = true;
+            return completeAuthorizationCallback(alias, activeFlow, callbackUrl);
+        };
         server = http.createServer(async (req, res) => {
             if (!req.url?.startsWith('/auth/callback')) {
                 res.writeHead(404);
@@ -109,82 +193,15 @@ export async function loginAccount(alias, flow, options) {
                 finish(() => reject(new Error('No active flow')));
                 return;
             }
-            const parsedUrl = url.parse(req.url, true);
-            const code = parsedUrl.query.code;
-            const returnedState = parsedUrl.query.state;
-            if (!code) {
-                res.writeHead(400);
-                res.end('No authorization code received');
-                finish(() => reject(new Error('No authorization code')));
-                return;
-            }
-            if (returnedState && returnedState !== activeFlow.state) {
-                res.writeHead(400);
-                res.end('Invalid state');
-                finish(() => reject(new Error('Invalid state')));
-                return;
-            }
             try {
-                const tokenRes = await fetch(TOKEN_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({
-                        grant_type: 'authorization_code',
-                        client_id: CLIENT_ID,
-                        code,
-                        code_verifier: activeFlow.pkce.verifier,
-                        redirect_uri: activeFlow.redirectUri
-                    })
-                });
-                if (!tokenRes.ok) {
-                    throw new Error(`Token exchange failed: ${tokenRes.status}`);
-                }
-                const tokens = (await tokenRes.json());
-                if (!tokens.refresh_token) {
-                    throw new Error('Token exchange did not return a refresh_token');
-                }
-                const now = Date.now();
-                const accessClaims = decodeJwtPayload(tokens.access_token);
-                const idClaims = tokens.id_token ? decodeJwtPayload(tokens.id_token) : null;
-                const expiresAt = getExpiryFromClaims(accessClaims) || getExpiryFromClaims(idClaims) || now + tokens.expires_in * 1000;
-                let email = getEmailFromClaims(idClaims) || getEmailFromClaims(accessClaims);
-                try {
-                    const userRes = await fetch(`${OPENAI_ISSUER}/userinfo`, {
-                        headers: { Authorization: `Bearer ${tokens.access_token}` }
-                    });
-                    if (userRes.ok) {
-                        const user = (await userRes.json());
-                        email = user.email || email;
-                    }
-                }
-                catch {
-                    /* user info fetch is non-critical */
-                }
-                const accountId = getAccountIdFromClaims(idClaims) ||
-                    getAccountIdFromClaims(accessClaims);
-                const planType = getPlanTypeFromClaims(idClaims) ||
-                    getPlanTypeFromClaims(accessClaims);
-                const store = addAccount(alias, {
-                    accessToken: tokens.access_token,
-                    refreshToken: tokens.refresh_token,
-                    idToken: tokens.id_token,
-                    accountId,
-                    planType,
-                    expiresAt,
-                    email,
-                    lastRefresh: new Date(now).toISOString(),
-                    lastSeenAt: now,
-                    source: 'opencode',
-                    authInvalid: false,
-                    authInvalidatedAt: undefined
-                });
-                const account = store.accounts[alias];
+                const callbackUrl = new URL(req.url, activeFlow.redirectUri).toString();
+                const account = await processCallback(callbackUrl);
                 res.writeHead(200, { 'Content-Type': 'text/html' });
                 res.end(`
           <html>
             <body style="font-family: system-ui; padding: 40px; text-align: center;">
               <h1>Account "${alias}" authenticated!</h1>
-              <p>${email || 'Unknown email'}</p>
+              <p>${account.email || 'Unknown email'}</p>
               <p>You can close this window.</p>
             </body>
           </html>
@@ -206,6 +223,19 @@ export async function loginAccount(alias, flow, options) {
             console.log(`[multi-auth] Open this URL in your browser:\n`);
             console.log(`  ${activeFlow.url}\n`);
             console.log(`[multi-auth] Waiting for callback on port ${actualPort}...`);
+            if (options?.callbackUrl) {
+                void options.callbackUrl.then(async (callbackUrl) => {
+                    if (finished || !activeFlow)
+                        return;
+                    try {
+                        const account = await processCallback(callbackUrl);
+                        finish(() => resolve(account));
+                    }
+                    catch (err) {
+                        finish(() => reject(err));
+                    }
+                });
+            }
         }
         catch (err) {
             finish(() => reject(err));

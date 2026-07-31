@@ -8,7 +8,6 @@ coverage
 dist
 node_modules
 npm-debug.log*
-auto-login/credentials.json
 docs
 tests
 *.md
