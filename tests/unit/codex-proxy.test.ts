@@ -29,6 +29,7 @@ describe('codex proxy helpers', () => {
   it('normalizes provider-prefixed and option-suffixed model ids', () => {
     expect(normalizeModel('openai/gpt-5.5-high')).toBe('gpt-5.5')
     expect(normalizeModel('gpt-5.4-fast')).toBe('gpt-5.4')
+    expect(normalizeModel('openai/gpt-5.6-sol-max')).toBe('gpt-5.6-sol')
     expect(normalizeModel(undefined)).toBe('gpt-5.1')
   })
 
@@ -67,6 +68,9 @@ describe('codex proxy helpers', () => {
   })
 
   it('detects supported fast-mode models', () => {
+    expect(supportsFastMode('gpt-5.6')).toBe(true)
+    expect(supportsFastMode('gpt-5.6-sol')).toBe(true)
+    expect(supportsFastMode('gpt-5.6-terra')).toBe(false)
     expect(supportsFastMode('gpt-5.5')).toBe(true)
     expect(supportsFastMode('gpt-5.4')).toBe(true)
     expect(supportsFastMode('gpt-5.3-codex')).toBe(false)

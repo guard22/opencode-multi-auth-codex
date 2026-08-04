@@ -1,6 +1,7 @@
 const MODELS_ENDPOINT = 'https://api.openai.com/v1/models';
-const REASONING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'];
+const REASONING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
 const MODEL_LIMITS = {
+    'gpt-5.6': { context: 1050000, input: 922000, output: 128000 },
     'gpt-5.5': { context: 530000, input: 400000, output: 130000 },
     'gpt-5.4': { context: 1050000, input: 922000, output: 128000 },
     'gpt-5.3': { context: 272000, output: 128000 },
@@ -45,7 +46,15 @@ function buildDefaultProviderModel(baseId) {
     };
 }
 function supportsFastMode(baseId) {
-    return baseId === 'gpt-5.5' || baseId === 'gpt-5.4';
+    return baseId === 'gpt-5.6' || baseId === 'gpt-5.6-sol' || baseId === 'gpt-5.5' || baseId === 'gpt-5.4';
+}
+function getReasoningLevels(baseId) {
+    if (baseId.includes('codex'))
+        return ['low', 'medium', 'high', 'xhigh'];
+    if (baseId === 'gpt-5.6' || baseId.startsWith('gpt-5.6-')) {
+        return ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
+    }
+    return ['none', 'low', 'medium', 'high', 'xhigh'];
 }
 function buildFastProviderModel(baseId) {
     const limits = getModelLimits(baseId);
@@ -89,11 +98,8 @@ export function generateModelVariants(baseModels) {
     const result = {};
     for (const model of baseModels) {
         const baseId = model.id;
-        const isCodex = baseId.includes('codex');
         result[baseId] = buildDefaultProviderModel(baseId);
-        const levels = isCodex
-            ? ['low', 'medium', 'high', 'xhigh']
-            : ['none', 'low', 'medium', 'high', 'xhigh'];
+        const levels = getReasoningLevels(baseId);
         for (const level of levels) {
             const variantId = `${baseId}-${level}`;
             result[variantId] = buildProviderModel(baseId, level);
@@ -106,6 +112,10 @@ export function generateModelVariants(baseModels) {
 }
 export function getDefaultModels() {
     const defaults = [
+        'gpt-5.6',
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
         'gpt-5.5',
         'gpt-5.4',
         'gpt-5.3',
@@ -120,10 +130,7 @@ export function getDefaultModels() {
     ];
     const result = {};
     for (const baseId of defaults) {
-        const isCodex = baseId.includes('codex');
-        const levels = isCodex
-            ? ['low', 'medium', 'high', 'xhigh']
-            : ['none', 'low', 'medium', 'high', 'xhigh'];
+        const levels = getReasoningLevels(baseId);
         result[baseId] = buildDefaultProviderModel(baseId);
         for (const level of levels) {
             if (baseId === 'gpt-5.1-codex-mini' && !['medium', 'high'].includes(level))

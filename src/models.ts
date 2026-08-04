@@ -2,10 +2,11 @@ import type { OpenAIModel, ProviderModel } from './types.js'
 
 const MODELS_ENDPOINT = 'https://api.openai.com/v1/models'
 
-const REASONING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
+const REASONING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 type ReasoningLevel = typeof REASONING_LEVELS[number]
 
 const MODEL_LIMITS: Record<string, { context: number; input?: number; output: number }> = {
+  'gpt-5.6': { context: 1050000, input: 922000, output: 128000 },
   'gpt-5.5': { context: 530000, input: 400000, output: 130000 },
   'gpt-5.4': { context: 1050000, input: 922000, output: 128000 },
   'gpt-5.3': { context: 272000, output: 128000 },
@@ -54,7 +55,15 @@ function buildDefaultProviderModel(baseId: string): ProviderModel {
 }
 
 function supportsFastMode(baseId: string): boolean {
-  return baseId === 'gpt-5.5' || baseId === 'gpt-5.4'
+  return baseId === 'gpt-5.6' || baseId === 'gpt-5.6-sol' || baseId === 'gpt-5.5' || baseId === 'gpt-5.4'
+}
+
+function getReasoningLevels(baseId: string): ReasoningLevel[] {
+  if (baseId.includes('codex')) return ['low', 'medium', 'high', 'xhigh']
+  if (baseId === 'gpt-5.6' || baseId.startsWith('gpt-5.6-')) {
+    return ['none', 'low', 'medium', 'high', 'xhigh', 'max']
+  }
+  return ['none', 'low', 'medium', 'high', 'xhigh']
 }
 
 function buildFastProviderModel(baseId: string): ProviderModel {
@@ -105,13 +114,9 @@ export function generateModelVariants(baseModels: OpenAIModel[]): Record<string,
 
   for (const model of baseModels) {
     const baseId = model.id
-    const isCodex = baseId.includes('codex')
-
     result[baseId] = buildDefaultProviderModel(baseId)
 
-    const levels: ReasoningLevel[] = isCodex
-      ? ['low', 'medium', 'high', 'xhigh']
-      : ['none', 'low', 'medium', 'high', 'xhigh']
+    const levels = getReasoningLevels(baseId)
 
     for (const level of levels) {
       const variantId = `${baseId}-${level}`
@@ -128,6 +133,10 @@ export function generateModelVariants(baseModels: OpenAIModel[]): Record<string,
 
 export function getDefaultModels(): Record<string, ProviderModel> {
   const defaults = [
+    'gpt-5.6',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
     'gpt-5.5',
     'gpt-5.4',
     'gpt-5.3',
@@ -144,10 +153,7 @@ export function getDefaultModels(): Record<string, ProviderModel> {
   const result: Record<string, ProviderModel> = {}
 
   for (const baseId of defaults) {
-    const isCodex = baseId.includes('codex')
-    const levels: ReasoningLevel[] = isCodex
-      ? ['low', 'medium', 'high', 'xhigh']
-      : ['none', 'low', 'medium', 'high', 'xhigh']
+    const levels = getReasoningLevels(baseId)
 
     result[baseId] = buildDefaultProviderModel(baseId)
 

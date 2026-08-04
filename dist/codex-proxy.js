@@ -159,7 +159,7 @@ export function normalizeModel(model) {
     if (!model)
         return 'gpt-5.1';
     const modelId = model.includes('/') ? model.split('/').pop() : model;
-    const baseModel = modelId.replace(/-(?:fast|none|minimal|low|medium|high|xhigh)$/, '');
+    const baseModel = modelId.replace(/-(?:fast|none|minimal|low|medium|high|xhigh|max)$/, '');
     // OpenCode may lag behind the ChatGPT Codex model allowlist. Route known older
     // Codex selections to the latest backend model when users opt in.
     const preferLatestRaw = process.env.OPENCODE_MULTI_AUTH_PREFER_CODEX_LATEST;
@@ -181,7 +181,7 @@ function isSparkModel(model) {
     return typeof model === 'string' && model.startsWith('gpt-5.3-codex-spark');
 }
 export function supportsFastMode(model) {
-    return model === 'gpt-5.5' || model === 'gpt-5.4';
+    return model === 'gpt-5.6' || model === 'gpt-5.6-sol' || model === 'gpt-5.5' || model === 'gpt-5.4';
 }
 function ensureContentType(headers) {
     const responseHeaders = new Headers(headers);
