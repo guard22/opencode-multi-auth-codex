@@ -91,11 +91,12 @@ export function validateAuthorizationCallback(flow, callbackUrl) {
     }
     return code;
 }
-async function completeAuthorizationCallback(alias, flow, callbackUrl) {
+async function completeAuthorizationCallback(alias, flow, callbackUrl, signal) {
     const code = validateAuthorizationCallback(flow, callbackUrl);
     const tokenRes = await fetch(TOKEN_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        signal,
         body: new URLSearchParams({
             grant_type: 'authorization_code',
             client_id: CLIENT_ID,
@@ -118,7 +119,8 @@ async function completeAuthorizationCallback(alias, flow, callbackUrl) {
     let email = getEmailFromClaims(idClaims) || getEmailFromClaims(accessClaims);
     try {
         const userRes = await fetch(`${OPENAI_ISSUER}/userinfo`, {
-            headers: { Authorization: `Bearer ${tokens.access_token}` }
+            headers: { Authorization: `Bearer ${tokens.access_token}` },
+            signal
         });
         if (userRes.ok) {
             const user = (await userRes.json());
@@ -132,6 +134,9 @@ async function completeAuthorizationCallback(alias, flow, callbackUrl) {
         getAccountIdFromClaims(accessClaims);
     const planType = getPlanTypeFromClaims(idClaims) ||
         getPlanTypeFromClaims(accessClaims);
+    if (signal?.aborted) {
+        throw new Error('Authentication cancelled');
+    }
     const store = addAccount(alias, {
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
@@ -157,7 +162,11 @@ export async function loginAccount(alias, flow, options) {
         let finished = false;
         let callbackInFlight = false;
         let timeout = null;
+        const onAbort = () => {
+            finish(() => reject(new Error('Authentication cancelled')));
+        };
         const cleanup = () => {
+            options?.signal?.removeEventListener('abort', onAbort);
             if (timeout) {
                 clearTimeout(timeout);
                 timeout = null;
@@ -174,12 +183,17 @@ export async function loginAccount(alias, flow, options) {
             cleanup();
             fn();
         };
+        if (options?.signal?.aborted) {
+            finish(() => reject(new Error('Authentication cancelled')));
+            return;
+        }
+        options?.signal?.addEventListener('abort', onAbort, { once: true });
         const processCallback = async (callbackUrl) => {
             if (finished || callbackInFlight || !activeFlow) {
                 throw new Error('Authorization callback is no longer pending');
             }
             callbackInFlight = true;
-            return completeAuthorizationCallback(alias, activeFlow, callbackUrl);
+            return completeAuthorizationCallback(alias, activeFlow, callbackUrl, options?.signal);
         };
         server = http.createServer(async (req, res) => {
             if (!req.url?.startsWith('/auth/callback')) {

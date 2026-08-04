@@ -64,6 +64,7 @@ let lastSyncAlias: string | null = null
 let syncTimer: NodeJS.Timeout | null = null
 let pendingLogin: PendingLoginState | null = null
 let pendingManualCallback: PendingManualCallback | null = null
+let pendingLoginAbortController: AbortController | null = null
 let lastLoginError: string | null = null
 let antigravityQuotaState: AntigravityQuotaState = { status: 'idle', scope: 'active' }
 let antigravityQuotaInFlight: Promise<AntigravityQuotaState> | null = null
@@ -1317,9 +1318,11 @@ const HTML = `<!doctype html>
               '</div>' +
               '<div class="notice">If localhost cannot connect, copy the full URL from the browser address bar and paste it here.</div>'
             : ''
+          const cancelButton = '<button class="secondary" id="cancelLoginBtn" style="margin-left: 10px;">Cancel</button>'
           loginNotice.innerHTML =
             'Login in progress for <strong>' + alias + '</strong>' +
             (manualLink ? ' — ' + manualLink : '') +
+            cancelButton +
             emailLine +
             stepLine +
             logs +
@@ -1327,6 +1330,24 @@ const HTML = `<!doctype html>
 
           const callbackInput = document.getElementById('callbackUrlInput')
           const submitCallbackBtn = document.getElementById('submitCallbackBtn')
+          const cancelLoginBtn = document.getElementById('cancelLoginBtn')
+          if (cancelLoginBtn) {
+            cancelLoginBtn.addEventListener('click', async () => {
+              cancelLoginBtn.disabled = true
+              cancelLoginBtn.textContent = 'Cancelling...'
+              try {
+                await api('/api/auth/cancel', { method: 'POST', body: '{}' })
+                callbackUrlDraft = ''
+                showToast('Authentication cancelled')
+                await refreshState()
+              } catch (err) {
+                cancelLoginBtn.disabled = false
+                cancelLoginBtn.textContent = 'Cancel'
+                const message = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err)
+                showToast(message)
+              }
+            })
+          }
           if (callbackInput) {
             callbackInput.addEventListener('input', () => {
               callbackUrlDraft = callbackInput.value
@@ -1700,7 +1721,15 @@ const HTML = `<!doctype html>
                     button.textContent = originalText
                   }, 2000)
                   await refreshState()
+                  return
                 }
+              }
+
+              if (!state.login) {
+                clearInterval(pollInterval)
+                button.disabled = false
+                button.textContent = originalText
+                return
               }
               
               if (attempts >= maxAttempts) {
@@ -2091,11 +2120,13 @@ function startManualLogin(alias: string): Promise<{ ok: true; url: string }> {
   }
 
   return createAuthorizationFlow().then((flow) => {
+    const abortController = new AbortController()
     let resolveCallbackUrl: (callbackUrl: string) => void = () => {}
     const callbackUrl = new Promise<string>((resolve) => {
       resolveCallbackUrl = resolve
     })
     pendingManualCallback = { alias, flow, resolve: resolveCallbackUrl }
+    pendingLoginAbortController = abortController
     setPendingLogin({
       alias,
       startedAt: Date.now(),
@@ -2106,18 +2137,33 @@ function startManualLogin(alias: string): Promise<{ ok: true; url: string }> {
       output: []
     })
     lastLoginError = null
-    loginAccount(alias, flow, { timeoutMs: LOGIN_TIMEOUT_MS, callbackUrl })
+    loginAccount(alias, flow, {
+      timeoutMs: LOGIN_TIMEOUT_MS,
+      callbackUrl,
+      signal: abortController.signal
+    })
       .then(() => {
         logInfo(`Login completed for ${alias}`)
-        setPendingLogin(null)
+        if (pendingLoginAbortController === abortController) {
+          setPendingLogin(null)
+        }
       })
       .catch((err) => {
-        lastLoginError = String(err)
-        logError(`Login failed for ${alias}: ${err}`)
-        setPendingLogin(null)
+        if (abortController.signal.aborted) {
+          logInfo(`Login cancelled for ${alias}`)
+        } else {
+          lastLoginError = String(err)
+          logError(`Login failed for ${alias}: ${err}`)
+        }
+        if (pendingLoginAbortController === abortController) {
+          setPendingLogin(null)
+        }
       })
       .finally(() => {
-        if (pendingManualCallback?.alias === alias) {
+        if (pendingLoginAbortController === abortController) {
+          pendingLoginAbortController = null
+        }
+        if (pendingManualCallback?.flow === flow) {
           pendingManualCallback = null
         }
       })
@@ -2715,6 +2761,23 @@ export function startWebConsole(options?: { port?: number; host?: string }): htt
       } catch (err) {
         sendJson(res, 400, { error: String(err instanceof Error ? err.message : err) })
       }
+      return
+    }
+
+    if (req.method === 'POST' && path === '/api/auth/cancel') {
+      if (!pendingLogin || !pendingLoginAbortController) {
+        sendJson(res, 409, { error: 'No authentication is in progress', code: 'NO_AUTH_IN_PROGRESS' })
+        return
+      }
+
+      const alias = pendingLogin.alias
+      const abortController = pendingLoginAbortController
+      pendingLogin = null
+      pendingManualCallback = null
+      pendingLoginAbortController = null
+      lastLoginError = null
+      abortController.abort()
+      sendJson(res, 200, { ok: true, alias })
       return
     }
     if (req.method === 'POST' && path === '/api/switch') {

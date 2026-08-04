@@ -284,6 +284,7 @@ Use `Authorization: Bearer $OPENCODE_MULTI_AUTH_API_KEY` for `/v1/*` routes. An 
 - `GET /api/logs`
 - `POST /api/sync`
 - `POST /api/auth/start`
+- `POST /api/auth/cancel`
 - `POST /api/switch`
 - `POST /api/remove`
 - `POST /api/account/meta`
