@@ -178,6 +178,11 @@ describe('api server', () => {
     expect(res.status).toBe(200)
     expect(res.body.object).toBe('list')
     expect(res.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'gpt-5.6', object: 'model' }),
+      expect.objectContaining({ id: 'gpt-5.6-sol', object: 'model' }),
+      expect.objectContaining({ id: 'gpt-5.6-terra', object: 'model' }),
+      expect.objectContaining({ id: 'gpt-5.6-luna', object: 'model' }),
+      expect.objectContaining({ id: 'gpt-5.6-sol-max', object: 'model' }),
       expect.objectContaining({ id: 'gpt-5.5', object: 'model' })
     ]))
   })
