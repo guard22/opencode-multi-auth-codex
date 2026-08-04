@@ -139,6 +139,55 @@ describe('web server hardening', () => {
     }
   })
 
+  it('cancels an active authentication flow and allows another to start', async () => {
+    const port = await getFreePort()
+    const callbackPort = await getFreePort()
+    process.env.OPENCODE_MULTI_AUTH_REDIRECT_PORTS = String(callbackPort)
+    const server = startWebConsole({ host: '127.0.0.1', port })
+    const baseUrl = `http://127.0.0.1:${port}`
+
+    try {
+      await once(server, 'listening')
+      const startResponse = await fetch(`${baseUrl}/api/auth/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alias: 'cancelled' })
+      })
+      expect(startResponse.status).toBe(200)
+
+      const cancelResponse = await fetch(`${baseUrl}/api/auth/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+      })
+      expect(cancelResponse.status).toBe(200)
+      await expect(cancelResponse.json()).resolves.toMatchObject({ ok: true, alias: 'cancelled' })
+
+      const stateResponse = await fetch(`${baseUrl}/api/state`)
+      const state = await stateResponse.json() as { login: unknown; lastLoginError: unknown }
+      expect(state.login).toBeNull()
+      expect(state.lastLoginError).toBeNull()
+
+      const restartResponse = await fetch(`${baseUrl}/api/auth/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alias: 'replacement' })
+      })
+      expect(restartResponse.status).toBe(200)
+
+      const secondCancelResponse = await fetch(`${baseUrl}/api/auth/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+      })
+      expect(secondCancelResponse.status).toBe(200)
+    } finally {
+      delete process.env.OPENCODE_MULTI_AUTH_REDIRECT_PORTS
+      await closeServer(server)
+      fs.unwatchFile(getCodexAuthPath())
+    }
+  })
+
   it('does not expose the removed credential login endpoint', async () => {
     const port = await getFreePort()
     const server = startWebConsole({ host: '127.0.0.1', port })

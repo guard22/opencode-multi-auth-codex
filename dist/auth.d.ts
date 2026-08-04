@@ -12,6 +12,7 @@ export interface AuthorizationFlow {
 export interface LoginAccountOptions {
     timeoutMs?: number;
     callbackUrl?: Promise<string>;
+    signal?: AbortSignal;
 }
 export declare function createAuthorizationFlow(port?: number): Promise<AuthorizationFlow>;
 export declare function validateAuthorizationCallback(flow: AuthorizationFlow, callbackUrl: string): string;

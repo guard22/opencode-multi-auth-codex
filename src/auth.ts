@@ -55,6 +55,7 @@ function generatePKCE(): { verifier: string; challenge: string } {
 export interface LoginAccountOptions {
   timeoutMs?: number
   callbackUrl?: Promise<string>
+  signal?: AbortSignal
 }
 
 export async function createAuthorizationFlow(port?: number): Promise<AuthorizationFlow> {
@@ -138,12 +139,14 @@ export function validateAuthorizationCallback(
 async function completeAuthorizationCallback(
   alias: string,
   flow: AuthorizationFlow,
-  callbackUrl: string
+  callbackUrl: string,
+  signal?: AbortSignal
 ): Promise<AccountCredentials> {
   const code = validateAuthorizationCallback(flow, callbackUrl)
   const tokenRes = await fetch(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    signal,
     body: new URLSearchParams({
       grant_type: 'authorization_code',
       client_id: CLIENT_ID,
@@ -169,7 +172,8 @@ async function completeAuthorizationCallback(
   let email: string | undefined = getEmailFromClaims(idClaims) || getEmailFromClaims(accessClaims)
   try {
     const userRes = await fetch(`${OPENAI_ISSUER}/userinfo`, {
-      headers: { Authorization: `Bearer ${tokens.access_token}` }
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+      signal
     })
     if (userRes.ok) {
       const user = (await userRes.json()) as { email?: string }
@@ -185,6 +189,10 @@ async function completeAuthorizationCallback(
   const planType =
     getPlanTypeFromClaims(idClaims) ||
     getPlanTypeFromClaims(accessClaims)
+
+  if (signal?.aborted) {
+    throw new Error('Authentication cancelled')
+  }
 
   const store = addAccount(alias, {
     accessToken: tokens.access_token,
@@ -219,7 +227,12 @@ export async function loginAccount(
     let callbackInFlight = false
     let timeout: NodeJS.Timeout | null = null
 
+    const onAbort = () => {
+      finish(() => reject(new Error('Authentication cancelled')))
+    }
+
     const cleanup = () => {
+      options?.signal?.removeEventListener('abort', onAbort)
       if (timeout) {
         clearTimeout(timeout)
         timeout = null
@@ -237,12 +250,18 @@ export async function loginAccount(
       fn()
     }
 
+    if (options?.signal?.aborted) {
+      finish(() => reject(new Error('Authentication cancelled')))
+      return
+    }
+    options?.signal?.addEventListener('abort', onAbort, { once: true })
+
     const processCallback = async (callbackUrl: string): Promise<AccountCredentials> => {
       if (finished || callbackInFlight || !activeFlow) {
         throw new Error('Authorization callback is no longer pending')
       }
       callbackInFlight = true
-      return completeAuthorizationCallback(alias, activeFlow, callbackUrl)
+      return completeAuthorizationCallback(alias, activeFlow, callbackUrl, options?.signal)
     }
 
     server = http.createServer(async (req, res) => {
