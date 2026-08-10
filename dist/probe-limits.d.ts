@@ -7,9 +7,10 @@ export interface ProbeResult {
     probeEffort?: string;
     probeDurationMs?: number;
     error?: string;
+    validatedAccessToken?: string;
     isAuthoritative?: boolean;
 }
-export declare function syncAccountTokensFromProbeHome(alias: string, codexHome: string, expectedAccessToken: string, expectedRefreshToken: string): boolean;
+export declare function syncAccountTokensFromProbeHome(alias: string, codexHome: string, expectedAccessToken: string, expectedRefreshToken: string): string | undefined;
 export declare function shouldRetryWithFallback(error?: string): boolean;
 export declare function getProbeEffort(): string;
 export declare function getProbeModels(): string[];

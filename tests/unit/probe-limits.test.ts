@@ -46,7 +46,7 @@ describe('Phase C: Limits Accuracy - Probe Authority', () => {
           codexHome,
           'old-access-token',
           'old-refresh-token'
-        )).toBe(false)
+        )).toBeUndefined()
         expect(loadStore().accounts['probe-race']).toEqual(expect.objectContaining({
           accessToken: 'new-access-token',
           refreshToken: 'new-refresh-token'

@@ -3,7 +3,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 import { findLatestSessionRateLimits } from './sessions-limits.js';
-import { mutateStore, updateAccountInStore } from './store.js';
+import { loadStore, mutateStore, updateAccountInStore } from './store.js';
+import { withAccountRefreshLock } from './token-refresh-lock.js';
 const CODEX_HOME_ROOT = path.join(os.homedir(), '.codex-multi');
 const CODEX_CONFIG_PATH = path.join(os.homedir(), '.codex', 'config.toml');
 const DEFAULT_PROMPT = 'Reply ONLY with OK. Do not run any commands.';
@@ -100,8 +101,8 @@ function readProbeAuthTokens(codexHome) {
 export function syncAccountTokensFromProbeHome(alias, codexHome, expectedAccessToken, expectedRefreshToken) {
     const parsed = readProbeAuthTokens(codexHome);
     if (!parsed?.accessToken || !parsed.refreshToken)
-        return false;
-    let synced = false;
+        return undefined;
+    let syncedAccessToken;
     mutateStore((store) => {
         const current = store.accounts[alias];
         if (!current ||
@@ -136,9 +137,9 @@ export function syncAccountTokensFromProbeHome(alias, codexHome, expectedAccessT
         if (tokenChanged && parsed.lastRefresh)
             updates.lastRefresh = parsed.lastRefresh;
         updateAccountInStore(store, alias, updates);
-        synced = true;
+        syncedAccessToken = parsed.accessToken;
     });
-    return synced;
+    return syncedAccessToken;
 }
 function ensureDir(dir) {
     if (!fs.existsSync(dir)) {
@@ -345,22 +346,48 @@ async function runProbeInHome(codexHome) {
         isAuthoritative: false
     };
 }
-export async function probeRateLimitsForAccount(account) {
+async function probeRateLimitsWithCredentials(account) {
     const aliasHome = getAliasHome(account.alias);
     ensureDir(aliasHome);
     const codexHome = fs.mkdtempSync(path.join(aliasHome, 'probe-'));
+    let result;
+    let validatedAccessToken;
     try {
         writeAuthJson(codexHome, account);
         copyConfigToml(codexHome);
-        return await runProbeInHome(codexHome);
+        result = await runProbeInHome(codexHome);
     }
     finally {
         try {
-            syncAccountTokensFromProbeHome(account.alias, codexHome, account.accessToken, account.refreshToken);
+            validatedAccessToken = syncAccountTokensFromProbeHome(account.alias, codexHome, account.accessToken, account.refreshToken);
         }
         finally {
             fs.rmSync(codexHome, { recursive: true, force: true });
         }
+    }
+    if (result.isAuthoritative && validatedAccessToken) {
+        result.validatedAccessToken = validatedAccessToken;
+    }
+    return result;
+}
+export async function probeRateLimitsForAccount(account) {
+    try {
+        return await withAccountRefreshLock(account.alias, async () => {
+            const coordinatedAccount = loadStore().accounts[account.alias];
+            if (!coordinatedAccount?.accessToken || !coordinatedAccount.refreshToken) {
+                return {
+                    isAuthoritative: false,
+                    error: 'Account credentials unavailable after acquiring probe refresh lock'
+                };
+            }
+            return probeRateLimitsWithCredentials(coordinatedAccount);
+        });
+    }
+    catch (err) {
+        return {
+            isAuthoritative: false,
+            error: `Probe refresh coordination failed: ${String(err)}`
+        };
     }
 }
 export function getProbeHomeRoot() {

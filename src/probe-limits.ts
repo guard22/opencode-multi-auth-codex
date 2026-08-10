@@ -3,7 +3,8 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { spawn } from 'node:child_process'
 import { findLatestSessionRateLimits } from './sessions-limits.js'
-import { mutateStore, updateAccountInStore } from './store.js'
+import { loadStore, mutateStore, updateAccountInStore } from './store.js'
+import { withAccountRefreshLock } from './token-refresh-lock.js'
 import type { AccountCredentials, AccountRateLimits } from './types.js'
 
 const CODEX_HOME_ROOT = path.join(os.homedir(), '.codex-multi')
@@ -23,6 +24,7 @@ export interface ProbeResult {
   probeEffort?: string
   probeDurationMs?: number
   error?: string
+  validatedAccessToken?: string
   // Phase C: Track if probe was authoritative (successful completion)
   isAuthoritative?: boolean
 }
@@ -137,10 +139,10 @@ export function syncAccountTokensFromProbeHome(
   codexHome: string,
   expectedAccessToken: string,
   expectedRefreshToken: string
-): boolean {
+): string | undefined {
   const parsed = readProbeAuthTokens(codexHome)
-  if (!parsed?.accessToken || !parsed.refreshToken) return false
-  let synced = false
+  if (!parsed?.accessToken || !parsed.refreshToken) return undefined
+  let syncedAccessToken: string | undefined
   mutateStore((store) => {
     const current = store.accounts[alias]
     if (
@@ -174,9 +176,9 @@ export function syncAccountTokensFromProbeHome(
     if (tokenChanged && parsed.lastRefresh) updates.lastRefresh = parsed.lastRefresh
 
     updateAccountInStore(store, alias, updates)
-    synced = true
+    syncedAccessToken = parsed.accessToken
   })
-  return synced
+  return syncedAccessToken
 }
 
 function ensureDir(dir: string): void {
@@ -411,18 +413,20 @@ async function runProbeInHome(codexHome: string): Promise<ProbeResult> {
   }
 }
 
-export async function probeRateLimitsForAccount(account: AccountCredentials): Promise<ProbeResult> {
+async function probeRateLimitsWithCredentials(account: AccountCredentials): Promise<ProbeResult> {
   const aliasHome = getAliasHome(account.alias)
   ensureDir(aliasHome)
   const codexHome = fs.mkdtempSync(path.join(aliasHome, 'probe-'))
+  let result!: ProbeResult
+  let validatedAccessToken: string | undefined
 
   try {
     writeAuthJson(codexHome, account)
     copyConfigToml(codexHome)
-    return await runProbeInHome(codexHome)
+    result = await runProbeInHome(codexHome)
   } finally {
     try {
-      syncAccountTokensFromProbeHome(
+      validatedAccessToken = syncAccountTokensFromProbeHome(
         account.alias,
         codexHome,
         account.accessToken,
@@ -430,6 +434,31 @@ export async function probeRateLimitsForAccount(account: AccountCredentials): Pr
       )
     } finally {
       fs.rmSync(codexHome, { recursive: true, force: true })
+    }
+  }
+
+  if (result.isAuthoritative && validatedAccessToken) {
+    result.validatedAccessToken = validatedAccessToken
+  }
+  return result
+}
+
+export async function probeRateLimitsForAccount(account: AccountCredentials): Promise<ProbeResult> {
+  try {
+    return await withAccountRefreshLock(account.alias, async () => {
+      const coordinatedAccount = loadStore().accounts[account.alias]
+      if (!coordinatedAccount?.accessToken || !coordinatedAccount.refreshToken) {
+        return {
+          isAuthoritative: false,
+          error: 'Account credentials unavailable after acquiring probe refresh lock'
+        }
+      }
+      return probeRateLimitsWithCredentials(coordinatedAccount)
+    })
+  } catch (err) {
+    return {
+      isAuthoritative: false,
+      error: `Probe refresh coordination failed: ${String(err)}`
     }
   }
 }

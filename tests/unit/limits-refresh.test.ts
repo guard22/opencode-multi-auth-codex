@@ -178,6 +178,7 @@ describe('refreshRateLimitsForAccount', () => {
     })
     probeRateLimitsForAccount.mockResolvedValue({
       isAuthoritative: true,
+      validatedAccessToken: 'probe-rotated-access-token',
       probeModel: 'gpt-5.4',
       rateLimits: {
         fiveHour: { remaining: 40, resetAt: Date.now() + 60_000 },
@@ -187,7 +188,7 @@ describe('refreshRateLimitsForAccount', () => {
 
     await refreshRateLimitsForAccount({ ...baseAccount })
 
-    expect(clearAuthInvalid).toHaveBeenCalledWith('dead-token', 'access-token')
+    expect(clearAuthInvalid).toHaveBeenCalledWith('dead-token', 'probe-rotated-access-token')
     expect(updateAccount).not.toHaveBeenLastCalledWith(
       'dead-token',
       expect.objectContaining({ authInvalid: expect.anything() })

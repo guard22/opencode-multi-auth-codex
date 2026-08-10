@@ -117,7 +117,9 @@ export async function refreshRateLimitsForAccount(account) {
         limitsConfidence: calculateLimitsConfidence(now, probeAccount.lastLimitErrorAt, 'success'),
         rateLimitedUntil: blockingResetAt
     });
-    clearAuthInvalid(account.alias, probeAccount.accessToken);
+    if (probe.validatedAccessToken) {
+        clearAuthInvalid(account.alias, probe.validatedAccessToken);
+    }
     logInfo(`Limits refreshed for ${account.alias} using model ${probe.probeModel || 'unknown'}, effort ${probe.probeEffort || 'default'}`);
     return { alias: account.alias, updated: true };
 }
