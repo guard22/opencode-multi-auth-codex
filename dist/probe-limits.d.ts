@@ -9,6 +9,7 @@ export interface ProbeResult {
     error?: string;
     isAuthoritative?: boolean;
 }
+export declare function syncAccountTokensFromProbeHome(alias: string, codexHome: string, expectedAccessToken: string, expectedRefreshToken: string): boolean;
 export declare function shouldRetryWithFallback(error?: string): boolean;
 export declare function getProbeEffort(): string;
 export declare function getProbeModels(): string[];

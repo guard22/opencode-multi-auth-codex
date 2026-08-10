@@ -515,7 +515,7 @@ export async function handleCodexProxyRequest(input, init, options) {
                 lastUpstreamError = await summarizeUpstreamError(account.alias, res, errorData);
                 const message = errorData?.error?.message || '';
                 if (message.toLowerCase().includes('invalidated') || res.status === 401) {
-                    markAuthInvalid(account.alias);
+                    markAuthInvalid(account.alias, token);
                 }
                 if (attempt < maxAttempts) {
                     continue;

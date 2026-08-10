@@ -5,9 +5,12 @@ import * as path from 'node:path'
 import { jest } from '@jest/globals'
 import {
   createAuthorizationFlow,
+  ensureValidToken,
   loginAccount,
+  refreshToken,
   validateAuthorizationCallback
 } from '../../src/auth.js'
+import { addAccount, loadStore, updateAccount } from '../../src/store.js'
 
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -97,6 +100,145 @@ describe('OAuth callback validation', () => {
       const tokenCall = (global.fetch as jest.Mock).mock.calls[0]
       const tokenInit = tokenCall[1] as RequestInit | undefined
       expect(String(tokenInit?.body)).toContain('redirect_uri=http%3A%2F%2Flocalhost')
+    } finally {
+      global.fetch = originalFetch
+      process.env = originalEnv
+      fs.rmSync(storeDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('token refresh coordination', () => {
+  it('shares one token exchange between concurrent callers', async () => {
+    const originalEnv = process.env
+    const originalFetch = global.fetch
+    const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oma-auth-refresh-'))
+    process.env = {
+      ...originalEnv,
+      OPENCODE_MULTI_AUTH_STORE_DIR: storeDir,
+      OPENCODE_MULTI_AUTH_STORE_FILE: path.join(storeDir, 'accounts.json'),
+      CODEX_SOFT_STORE_PASSPHRASE: ''
+    }
+
+    addAccount('concurrent', {
+      accessToken: jwt({ exp: 1 }),
+      refreshToken: 'original-refresh-token',
+      expiresAt: Date.now() - 1
+    })
+
+    let releaseResponse: (() => void) | undefined
+    const responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve
+    })
+    const mockFetch = jest.fn(async () => {
+      await responseGate
+      return new Response(JSON.stringify({
+        access_token: jwt({ exp: Math.floor(Date.now() / 1000) + 3600 }),
+        refresh_token: 'rotated-refresh-token',
+        expires_in: 3600,
+        token_type: 'Bearer'
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    })
+    global.fetch = mockFetch as typeof fetch
+
+    try {
+      const first = ensureValidToken('concurrent')
+      const second = ensureValidToken('concurrent')
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      releaseResponse?.()
+
+      const [firstToken, secondToken] = await Promise.all([first, second])
+
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      expect(firstToken).toBe(secondToken)
+      expect(loadStore().accounts.concurrent.refreshToken).toBe('rotated-refresh-token')
+    } finally {
+      global.fetch = originalFetch
+      process.env = originalEnv
+      fs.rmSync(storeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('returns newer credentials when a failed refresh loses a token race', async () => {
+    const originalEnv = process.env
+    const originalFetch = global.fetch
+    const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oma-auth-refresh-race-'))
+    process.env = {
+      ...originalEnv,
+      OPENCODE_MULTI_AUTH_STORE_DIR: storeDir,
+      OPENCODE_MULTI_AUTH_STORE_FILE: path.join(storeDir, 'accounts.json'),
+      CODEX_SOFT_STORE_PASSPHRASE: ''
+    }
+
+    addAccount('refresh-race', {
+      accessToken: 'old-access-token',
+      refreshToken: 'old-refresh-token',
+      expiresAt: Date.now() - 1
+    })
+
+    let releaseResponse: (() => void) | undefined
+    const responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve
+    })
+    let notifyFetchStarted: (() => void) | undefined
+    const fetchStarted = new Promise<void>((resolve) => {
+      notifyFetchStarted = resolve
+    })
+    global.fetch = jest.fn(async () => {
+      notifyFetchStarted?.()
+      await responseGate
+      return new Response('{}', { status: 401 })
+    }) as typeof fetch
+
+    try {
+      const refresh = refreshToken('refresh-race')
+      await fetchStarted
+      updateAccount('refresh-race', {
+        accessToken: 'new-access-token',
+        refreshToken: 'new-refresh-token',
+        expiresAt: Date.now() + 3_600_000,
+        authInvalid: false,
+        authInvalidatedAt: undefined
+      })
+      releaseResponse?.()
+
+      const result = await refresh
+
+      expect(result?.accessToken).toBe('new-access-token')
+      expect(loadStore().accounts['refresh-race'].authInvalid).toBe(false)
+    } finally {
+      global.fetch = originalFetch
+      process.env = originalEnv
+      fs.rmSync(storeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves stored credentials when a successful refresh response is malformed', async () => {
+    const originalEnv = process.env
+    const originalFetch = global.fetch
+    const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oma-auth-refresh-invalid-'))
+    process.env = {
+      ...originalEnv,
+      OPENCODE_MULTI_AUTH_STORE_DIR: storeDir,
+      OPENCODE_MULTI_AUTH_STORE_FILE: path.join(storeDir, 'accounts.json'),
+      CODEX_SOFT_STORE_PASSPHRASE: ''
+    }
+    addAccount('malformed', {
+      accessToken: 'original-access-token',
+      refreshToken: 'original-refresh-token',
+      expiresAt: Date.now() - 1
+    })
+    global.fetch = jest.fn(async () => new Response('{}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    })) as typeof fetch
+
+    try {
+      await expect(refreshToken('malformed')).resolves.toBeNull()
+      expect(loadStore().accounts.malformed).toEqual(expect.objectContaining({
+        accessToken: 'original-access-token',
+        refreshToken: 'original-refresh-token'
+      }))
     } finally {
       global.fetch = originalFetch
       process.env = originalEnv
