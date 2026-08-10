@@ -3,7 +3,8 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { spawn } from 'node:child_process'
 import { findLatestSessionRateLimits } from './sessions-limits.js'
-import { loadStore, updateAccount } from './store.js'
+import { loadStore, mutateStore, updateAccountInStore } from './store.js'
+import { withAccountRefreshLock } from './token-refresh-lock.js'
 import type { AccountCredentials, AccountRateLimits } from './types.js'
 
 const CODEX_HOME_ROOT = path.join(os.homedir(), '.codex-multi')
@@ -23,6 +24,7 @@ export interface ProbeResult {
   probeEffort?: string
   probeDurationMs?: number
   error?: string
+  validatedAccessToken?: string
   // Phase C: Track if probe was authoritative (successful completion)
   isAuthoritative?: boolean
 }
@@ -132,37 +134,51 @@ function readProbeAuthTokens(codexHome: string): ProbeAuthTokens | null {
   }
 }
 
-function syncAccountTokensFromProbeHome(alias: string, codexHome: string): void {
+export function syncAccountTokensFromProbeHome(
+  alias: string,
+  codexHome: string,
+  expectedAccessToken: string,
+  expectedRefreshToken: string
+): string | undefined {
   const parsed = readProbeAuthTokens(codexHome)
-  if (!parsed?.accessToken || !parsed.refreshToken) return
-  const current = loadStore().accounts[alias]
-  const tokenChanged = Boolean(
-    current &&
-    (
+  if (!parsed?.accessToken || !parsed.refreshToken) return undefined
+  let syncedAccessToken: string | undefined
+  mutateStore((store) => {
+    const current = store.accounts[alias]
+    if (
+      !current ||
+      current.accessToken !== expectedAccessToken ||
+      current.refreshToken !== expectedRefreshToken
+    ) {
+      return
+    }
+    const tokenChanged = Boolean(
       current.accessToken !== parsed.accessToken ||
       current.refreshToken !== parsed.refreshToken ||
       (parsed.idToken && current.idToken !== parsed.idToken)
     )
-  )
 
-  const updates: Partial<AccountCredentials> = {
-    accessToken: parsed.accessToken,
-    refreshToken: parsed.refreshToken,
-    lastSeenAt: Date.now(),
-    source: 'codex'
-  }
-  if (parsed.idToken) updates.idToken = parsed.idToken
-  if (parsed.accountId) updates.accountId = parsed.accountId
-  if (parsed.accountUserId) updates.accountUserId = parsed.accountUserId
-  if (parsed.userId) updates.userId = parsed.userId
-  if (parsed.planType) updates.planType = parsed.planType
-  if (parsed.email) updates.email = parsed.email
-  if (typeof parsed.expiresAt === 'number' && Number.isFinite(parsed.expiresAt)) {
-    updates.expiresAt = parsed.expiresAt
-  }
-  if (tokenChanged && parsed.lastRefresh) updates.lastRefresh = parsed.lastRefresh
+    const updates: Partial<AccountCredentials> = {
+      accessToken: parsed.accessToken,
+      refreshToken: parsed.refreshToken,
+      lastSeenAt: Date.now(),
+      source: 'codex'
+    }
+    if (parsed.idToken) updates.idToken = parsed.idToken
+    if (parsed.accountId) updates.accountId = parsed.accountId
+    if (parsed.accountUserId) updates.accountUserId = parsed.accountUserId
+    if (parsed.userId) updates.userId = parsed.userId
+    if (parsed.planType) updates.planType = parsed.planType
+    if (parsed.email) updates.email = parsed.email
+    if (typeof parsed.expiresAt === 'number' && Number.isFinite(parsed.expiresAt)) {
+      updates.expiresAt = parsed.expiresAt
+    }
+    if (tokenChanged && parsed.lastRefresh) updates.lastRefresh = parsed.lastRefresh
 
-  updateAccount(alias, updates)
+    updateAccountInStore(store, alias, updates)
+    syncedAccessToken = parsed.accessToken
+  })
+  return syncedAccessToken
 }
 
 function ensureDir(dir: string): void {
@@ -312,12 +328,7 @@ async function runCodexExec(
   })
 }
 
-export async function probeRateLimitsForAccount(account: AccountCredentials): Promise<ProbeResult> {
-  const codexHome = getAliasHome(account.alias)
-  ensureDir(codexHome)
-  writeAuthJson(codexHome, account)
-  copyConfigToml(codexHome)
-
+async function runProbeInHome(codexHome: string): Promise<ProbeResult> {
   const sessionsDir = path.join(codexHome, 'sessions')
   const probeModels = getProbeModels()
   const probeEffort = getProbeEffort()
@@ -327,10 +338,9 @@ export async function probeRateLimitsForAccount(account: AccountCredentials): Pr
   for (let idx = 0; idx < probeModels.length; idx++) {
     const probeModel = probeModels[idx]
     const startedAt = Date.now()
-    
+
     // Phase C: Pass effort config and track duration
     const execResult = await runCodexExec(codexHome, probeModel, probeEffort)
-    syncAccountTokensFromProbeHome(account.alias, codexHome)
     const latest = findLatestSessionRateLimits({
       sessionsDir,
       sinceMs: startedAt - 5_000
@@ -356,18 +366,17 @@ export async function probeRateLimitsForAccount(account: AccountCredentials): Pr
 
     const hasNext = idx < probeModels.length - 1
     if (!hasNext) break
-    
+
     // Phase C: Retry with fallback on unsupported_value / reasoning.effort errors
     if (shouldRetryWithFallback(execResult.error)) {
       // Try with 'low' effort explicitly if current effort failed
       if (probeEffort !== 'low' && execResult.error?.toLowerCase().includes('reasoning')) {
         const lowEffortResult = await runCodexExec(codexHome, probeModel, 'low')
-        syncAccountTokensFromProbeHome(account.alias, codexHome)
         const lowEffortLatest = findLatestSessionRateLimits({
           sessionsDir,
           sinceMs: Date.now() - 5_000
         })
-        
+
         if (lowEffortResult.ok && lowEffortLatest?.rateLimits) {
           return {
             rateLimits: lowEffortLatest.rateLimits,
@@ -379,28 +388,78 @@ export async function probeRateLimitsForAccount(account: AccountCredentials): Pr
             isAuthoritative: true
           }
         }
-        
+
         if (lowEffortResult.error) {
           attemptErrors.push(`[model=${probeModel}, effort=low] ${lowEffortResult.error}`)
         }
       }
       continue
     }
-    
+
     // Don't retry if it's not a fallback-eligible error
     break
   }
 
   if (attemptErrors.length > 0) {
-    return { 
+    return {
       error: attemptErrors[attemptErrors.length - 1],
       isAuthoritative: false
     }
   }
 
-  return { 
+  return {
     error: lastError,
     isAuthoritative: false
+  }
+}
+
+async function probeRateLimitsWithCredentials(account: AccountCredentials): Promise<ProbeResult> {
+  const aliasHome = getAliasHome(account.alias)
+  ensureDir(aliasHome)
+  const codexHome = fs.mkdtempSync(path.join(aliasHome, 'probe-'))
+  let result!: ProbeResult
+  let validatedAccessToken: string | undefined
+
+  try {
+    writeAuthJson(codexHome, account)
+    copyConfigToml(codexHome)
+    result = await runProbeInHome(codexHome)
+  } finally {
+    try {
+      validatedAccessToken = syncAccountTokensFromProbeHome(
+        account.alias,
+        codexHome,
+        account.accessToken,
+        account.refreshToken
+      )
+    } finally {
+      fs.rmSync(codexHome, { recursive: true, force: true })
+    }
+  }
+
+  if (result.isAuthoritative && validatedAccessToken) {
+    result.validatedAccessToken = validatedAccessToken
+  }
+  return result
+}
+
+export async function probeRateLimitsForAccount(account: AccountCredentials): Promise<ProbeResult> {
+  try {
+    return await withAccountRefreshLock(account.alias, async () => {
+      const coordinatedAccount = loadStore().accounts[account.alias]
+      if (!coordinatedAccount?.accessToken || !coordinatedAccount.refreshToken) {
+        return {
+          isAuthoritative: false,
+          error: 'Account credentials unavailable after acquiring probe refresh lock'
+        }
+      }
+      return probeRateLimitsWithCredentials(coordinatedAccount)
+    })
+  } catch (err) {
+    return {
+      isAuthoritative: false,
+      error: `Probe refresh coordination failed: ${String(err)}`
+    }
   }
 }
 

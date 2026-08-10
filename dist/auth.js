@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import * as http from 'http';
-import { addAccount, updateAccount, loadStore } from './store.js';
-import { clearAuthInvalid } from './rotation.js';
+import { addAccount, loadStore, mutateStore } from './store.js';
+import { withAccountRefreshLock } from './token-refresh-lock.js';
 import { decodeJwtPayload, getAccountIdFromClaims, getEmailFromClaims, getExpiryFromClaims, getPlanTypeFromClaims } from './codex-auth.js';
 const OPENAI_ISSUER = 'https://auth.openai.com';
 const AUTHORIZE_URL = `${OPENAI_ISSUER}/oauth/authorize`;
@@ -9,6 +9,8 @@ const TOKEN_URL = `${OPENAI_ISSUER}/oauth/token`;
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const DEFAULT_REDIRECT_PORTS = [1455, 1456, 1457, 1458, 1459];
 const SCOPES = ['openid', 'profile', 'email', 'offline_access'];
+const TOKEN_REFRESH_TIMEOUT_MS = 25_000;
+const tokenRefreshes = new Map();
 function getRedirectUri(port) {
     return `http://localhost:${port}/auth/callback`;
 }
@@ -18,6 +20,38 @@ function getRedirectPorts() {
         .map((value) => Number(value.trim()))
         .filter((value) => Number.isInteger(value) && value > 0 && value <= 65535);
     return configured.length > 0 ? Array.from(new Set(configured)) : DEFAULT_REDIRECT_PORTS;
+}
+function parseTokenResponse(value) {
+    if (!value || typeof value !== 'object') {
+        throw new Error('Invalid token refresh response');
+    }
+    const response = value;
+    if (typeof response.access_token !== 'string' ||
+        response.access_token.trim().length === 0 ||
+        typeof response.expires_in !== 'number' ||
+        !Number.isFinite(response.expires_in) ||
+        response.expires_in <= 0 ||
+        (response.refresh_token !== undefined && typeof response.refresh_token !== 'string') ||
+        (response.id_token !== undefined && typeof response.id_token !== 'string') ||
+        (response.token_type !== undefined && typeof response.token_type !== 'string')) {
+        throw new Error('Invalid token refresh response');
+    }
+    return response;
+}
+function getNewerAccount(alias, expectedAccessToken, expectedRefreshToken) {
+    try {
+        const current = loadStore().accounts[alias];
+        if (!current)
+            return null;
+        if (current.accessToken !== expectedAccessToken ||
+            current.refreshToken !== expectedRefreshToken) {
+            return current;
+        }
+    }
+    catch {
+        return null;
+    }
+    return null;
 }
 function generatePKCE() {
     const verifier = randomBytes(32).toString('base64url');
@@ -260,63 +294,130 @@ export async function loginAccount(alias, flow, options) {
         }, timeoutMs);
     });
 }
-export async function refreshToken(alias) {
-    const store = loadStore();
-    const account = store.accounts[alias];
-    if (!account?.refreshToken) {
+async function refreshTokenWithLock(alias) {
+    let initialAccount;
+    try {
+        initialAccount = loadStore().accounts[alias];
+    }
+    catch (err) {
+        console.error(`[multi-auth] Failed to load credentials for ${alias}:`, err);
+        return null;
+    }
+    if (!initialAccount?.refreshToken) {
         console.error(`[multi-auth] No refresh token for ${alias}`);
         return null;
     }
+    const expectedAccessToken = initialAccount.accessToken;
+    const expectedRefreshToken = initialAccount.refreshToken;
     try {
-        const tokenRes = await fetch(TOKEN_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-                grant_type: 'refresh_token',
-                client_id: CLIENT_ID,
-                refresh_token: account.refreshToken
-            })
-        });
-        if (!tokenRes.ok) {
-            console.error(`[multi-auth] Refresh failed for ${alias}: ${tokenRes.status}`);
-            if (tokenRes.status === 401 || tokenRes.status === 403) {
-                try {
-                    updateAccount(alias, {
-                        authInvalid: true,
-                        authInvalidatedAt: Date.now()
-                    });
-                }
-                catch {
-                    // ignore
-                }
+        return await withAccountRefreshLock(alias, async () => {
+            const account = loadStore().accounts[alias];
+            if (!account?.refreshToken) {
+                console.error(`[multi-auth] No refresh token for ${alias}`);
+                return null;
             }
-            return null;
-        }
-        const tokens = (await tokenRes.json());
-        const accessClaims = decodeJwtPayload(tokens.access_token);
-        const idClaims = tokens.id_token ? decodeJwtPayload(tokens.id_token) : null;
-        const expiresAt = getExpiryFromClaims(accessClaims) || getExpiryFromClaims(idClaims) || Date.now() + tokens.expires_in * 1000;
-        const updates = {
-            accessToken: tokens.access_token,
-            refreshToken: tokens.refresh_token || account.refreshToken,
-            expiresAt,
-            lastRefresh: new Date().toISOString(),
-            idToken: tokens.id_token || account.idToken,
-            accountId: getAccountIdFromClaims(idClaims) ||
-                getAccountIdFromClaims(accessClaims) ||
-                account.accountId,
-            planType: getPlanTypeFromClaims(idClaims) ||
-                getPlanTypeFromClaims(accessClaims) ||
-                account.planType
-        };
-        const updatedStore = updateAccount(alias, updates);
-        clearAuthInvalid(alias);
-        return updatedStore.accounts[alias];
+            if (account.accessToken !== expectedAccessToken ||
+                account.refreshToken !== expectedRefreshToken) {
+                return account;
+            }
+            try {
+                const tokenRes = await fetch(TOKEN_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        grant_type: 'refresh_token',
+                        client_id: CLIENT_ID,
+                        refresh_token: expectedRefreshToken
+                    }),
+                    signal: AbortSignal.timeout(TOKEN_REFRESH_TIMEOUT_MS)
+                });
+                if (!tokenRes.ok) {
+                    console.error(`[multi-auth] Refresh failed for ${alias}: ${tokenRes.status}`);
+                    if (tokenRes.status === 401 || tokenRes.status === 403) {
+                        let newerAccount = null;
+                        try {
+                            mutateStore((store) => {
+                                const current = store.accounts[alias];
+                                if (!current)
+                                    return;
+                                if (current.accessToken !== expectedAccessToken ||
+                                    current.refreshToken !== expectedRefreshToken) {
+                                    newerAccount = current;
+                                    return;
+                                }
+                                store.accounts[alias] = {
+                                    ...current,
+                                    authInvalid: true,
+                                    authInvalidatedAt: Date.now()
+                                };
+                            });
+                        }
+                        catch {
+                            return getNewerAccount(alias, expectedAccessToken, expectedRefreshToken);
+                        }
+                        return newerAccount;
+                    }
+                    return getNewerAccount(alias, expectedAccessToken, expectedRefreshToken);
+                }
+                const tokens = parseTokenResponse(await tokenRes.json());
+                const accessClaims = decodeJwtPayload(tokens.access_token);
+                const idClaims = tokens.id_token ? decodeJwtPayload(tokens.id_token) : null;
+                const expiresAt = getExpiryFromClaims(accessClaims) || getExpiryFromClaims(idClaims) || Date.now() + tokens.expires_in * 1000;
+                if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+                    throw new Error('Invalid token refresh expiry');
+                }
+                const updates = {
+                    accessToken: tokens.access_token,
+                    refreshToken: tokens.refresh_token || expectedRefreshToken,
+                    expiresAt,
+                    lastRefresh: new Date().toISOString(),
+                    idToken: tokens.id_token || account.idToken,
+                    accountId: getAccountIdFromClaims(idClaims) ||
+                        getAccountIdFromClaims(accessClaims) ||
+                        account.accountId,
+                    planType: getPlanTypeFromClaims(idClaims) ||
+                        getPlanTypeFromClaims(accessClaims) ||
+                        account.planType,
+                    authInvalid: false,
+                    authInvalidatedAt: undefined
+                };
+                let result = null;
+                mutateStore((store) => {
+                    const current = store.accounts[alias];
+                    if (!current)
+                        return;
+                    if (current.accessToken !== expectedAccessToken ||
+                        current.refreshToken !== expectedRefreshToken) {
+                        result = current;
+                        return;
+                    }
+                    store.accounts[alias] = { ...current, ...updates };
+                    result = store.accounts[alias];
+                });
+                return result;
+            }
+            catch (err) {
+                console.error(`[multi-auth] Refresh error for ${alias}:`, err);
+                return getNewerAccount(alias, expectedAccessToken, expectedRefreshToken);
+            }
+        });
     }
     catch (err) {
-        console.error(`[multi-auth] Refresh error for ${alias}:`, err);
-        return null;
+        console.error(`[multi-auth] Refresh coordination error for ${alias}:`, err);
+        return getNewerAccount(alias, expectedAccessToken, expectedRefreshToken);
     }
+}
+export function refreshToken(alias) {
+    const pending = tokenRefreshes.get(alias);
+    if (pending)
+        return pending;
+    const refresh = refreshTokenWithLock(alias).finally(() => {
+        if (tokenRefreshes.get(alias) === refresh) {
+            tokenRefreshes.delete(alias);
+        }
+    });
+    tokenRefreshes.set(alias, refresh);
+    return refresh;
 }
 export async function ensureValidToken(alias) {
     const store = loadStore();

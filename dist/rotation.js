@@ -360,17 +360,39 @@ export function clearWorkspaceDeactivated(alias) {
         workspaceDeactivatedError: undefined
     });
 }
-export function markAuthInvalid(alias) {
-    updateAccount(alias, {
-        authInvalid: true,
-        authInvalidatedAt: Date.now()
+export function markAuthInvalid(alias, expectedAccessToken) {
+    let marked = false;
+    mutateStore((store) => {
+        const account = store.accounts[alias];
+        if (!account)
+            return;
+        if (account.accessToken !== expectedAccessToken)
+            return;
+        store.accounts[alias] = {
+            ...account,
+            authInvalid: true,
+            authInvalidatedAt: Date.now()
+        };
+        marked = true;
     });
-    console.warn(`[multi-auth] Account ${alias} marked invalidated`);
+    if (marked) {
+        console.warn(`[multi-auth] Account ${alias} marked invalidated`);
+    }
+    return marked;
 }
-export function clearAuthInvalid(alias) {
-    updateAccount(alias, {
-        authInvalid: false,
-        authInvalidatedAt: undefined
+export function clearAuthInvalid(alias, expectedAccessToken) {
+    let cleared = false;
+    mutateStore((store) => {
+        const account = store.accounts[alias];
+        if (!account || account.accessToken !== expectedAccessToken)
+            return;
+        store.accounts[alias] = {
+            ...account,
+            authInvalid: false,
+            authInvalidatedAt: undefined
+        };
+        cleared = true;
     });
+    return cleared;
 }
 //# sourceMappingURL=rotation.js.map

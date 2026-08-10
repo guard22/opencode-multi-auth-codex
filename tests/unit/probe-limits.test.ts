@@ -1,12 +1,63 @@
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { calculateLimitsConfidence, type LimitsConfidence } from '../../src/types.js'
 import { 
   shouldRetryWithFallback, 
   getProbeEffort, 
   getProbeModels,
+  syncAccountTokensFromProbeHome,
   type ProbeResult 
 } from '../../src/probe-limits.js'
+import { addAccount, loadStore, updateAccount } from '../../src/store.js'
 
 describe('Phase C: Limits Accuracy - Probe Authority', () => {
+  describe('probe credential synchronization', () => {
+    it('does not overwrite credentials rotated while a probe was running', () => {
+      const originalEnv = process.env
+      const testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oma-probe-token-race-'))
+      const codexHome = path.join(testDir, 'probe-home')
+      fs.mkdirSync(codexHome, { recursive: true })
+      process.env = {
+        ...originalEnv,
+        CODEX_SOFT_STORE_PASSPHRASE: '',
+        OPENCODE_MULTI_AUTH_STORE_DIR: testDir,
+        OPENCODE_MULTI_AUTH_STORE_FILE: path.join(testDir, 'accounts.json')
+      }
+      addAccount('probe-race', {
+        accessToken: 'old-access-token',
+        refreshToken: 'old-refresh-token',
+        expiresAt: Date.now() + 3_600_000
+      })
+      fs.writeFileSync(path.join(codexHome, 'auth.json'), JSON.stringify({
+        tokens: {
+          access_token: 'probe-access-token',
+          refresh_token: 'probe-refresh-token'
+        }
+      }))
+      updateAccount('probe-race', {
+        accessToken: 'new-access-token',
+        refreshToken: 'new-refresh-token'
+      })
+
+      try {
+        expect(syncAccountTokensFromProbeHome(
+          'probe-race',
+          codexHome,
+          'old-access-token',
+          'old-refresh-token'
+        )).toBeUndefined()
+        expect(loadStore().accounts['probe-race']).toEqual(expect.objectContaining({
+          accessToken: 'new-access-token',
+          refreshToken: 'new-refresh-token'
+        }))
+      } finally {
+        process.env = originalEnv
+        fs.rmSync(testDir, { recursive: true, force: true })
+      }
+    })
+  })
+
   describe('calculateLimitsConfidence', () => {
     const now = Date.now()
     const fiveMinutesAgo = now - 5 * 60 * 1000

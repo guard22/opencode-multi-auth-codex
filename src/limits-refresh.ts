@@ -4,12 +4,13 @@ import {
   mergeRateLimits,
   parseRateLimitResetFromError
 } from './rate-limits.js'
-import { markAuthInvalid, markWorkspaceDeactivated } from './rotation.js'
+import { clearAuthInvalid, markAuthInvalid, markWorkspaceDeactivated } from './rotation.js'
 import { loadStore, updateAccount } from './store.js'
 import { probeRateLimitsForAccount } from './probe-limits.js'
 import { logError, logInfo } from './logger.js'
 import { DEFAULT_CONFIG, calculateLimitsConfidence } from './types.js'
 import { fetchUsageRateLimitsForAccount } from './usage-limits.js'
+import { ensureValidToken, refreshToken } from './auth.js'
 import type { AccountCredentials } from './types.js'
 
 export interface LimitRefreshResult {
@@ -21,7 +22,29 @@ export interface LimitRefreshResult {
 export async function refreshRateLimitsForAccount(account: AccountCredentials): Promise<LimitRefreshResult> {
   updateAccount(account.alias, { limitStatus: 'running', limitError: undefined })
   logInfo(`Refreshing limits for ${account.alias}`)
-  const usage = await fetchUsageRateLimitsForAccount(account)
+  await ensureValidToken(account.alias)
+  const latestAccount = loadStore().accounts[account.alias]
+  if (!latestAccount) {
+    const error = 'Account removed during token refresh'
+    logError(`Limit refresh failed for ${account.alias}: ${error}`)
+    return { alias: account.alias, updated: false, error }
+  }
+  let requestAccount = latestAccount
+  let usage = await fetchUsageRateLimitsForAccount(requestAccount)
+
+  if (usage.authInvalid) {
+    const current = loadStore().accounts[account.alias]
+    if (current && current.accessToken !== requestAccount.accessToken) {
+      requestAccount = current
+      usage = await fetchUsageRateLimitsForAccount(requestAccount)
+    } else {
+      const refreshed = await refreshToken(account.alias)
+      if (refreshed && refreshed.accessToken !== requestAccount.accessToken) {
+        requestAccount = refreshed
+        usage = await fetchUsageRateLimitsForAccount(requestAccount)
+      }
+    }
+  }
 
   if (usage.rateLimits) {
     const now = Date.now()
@@ -30,9 +53,7 @@ export async function refreshRateLimitsForAccount(account: AccountCredentials): 
       limitStatus: 'success',
       limitError: undefined,
       lastLimitProbeAt: now,
-      limitsConfidence: calculateLimitsConfidence(now, account.lastLimitErrorAt, 'success'),
-      authInvalid: false,
-      authInvalidatedAt: undefined
+      limitsConfidence: calculateLimitsConfidence(now, account.lastLimitErrorAt, 'success')
     }
     if (usage.planType) {
       updates.planType = usage.planType
@@ -41,6 +62,7 @@ export async function refreshRateLimitsForAccount(account: AccountCredentials): 
       updates.rateLimitedUntil = usage.rateLimitedUntil
     }
     updateAccount(account.alias, updates)
+    clearAuthInvalid(account.alias, requestAccount.accessToken)
     logInfo(`Limits refreshed for ${account.alias} via usage API`)
     return { alias: account.alias, updated: true }
   }
@@ -49,7 +71,7 @@ export async function refreshRateLimitsForAccount(account: AccountCredentials): 
     if (usage.shouldProbeFallback === false) {
       const now = Date.now()
       if (usage.authInvalid) {
-        markAuthInvalid(account.alias)
+        markAuthInvalid(account.alias, requestAccount.accessToken)
       }
       if (usage.workspaceDeactivated) {
         markWorkspaceDeactivated(
@@ -80,7 +102,8 @@ export async function refreshRateLimitsForAccount(account: AccountCredentials): 
     logInfo(`Usage API limits lookup failed for ${account.alias}, falling back to probe: ${usage.error}`)
   }
 
-  const probe = await probeRateLimitsForAccount(account)
+  const probeAccount = loadStore().accounts[account.alias] || requestAccount
+  const probe = await probeRateLimitsForAccount(probeAccount)
 
   if (!probe.isAuthoritative || !probe.rateLimits) {
     const now = Date.now()
@@ -117,18 +140,19 @@ export async function refreshRateLimitsForAccount(account: AccountCredentials): 
   }
 
   const now = Date.now()
-  const mergedRateLimits = mergeRateLimits(account.rateLimits, probe.rateLimits)
+  const mergedRateLimits = mergeRateLimits(probeAccount.rateLimits, probe.rateLimits)
   const blockingResetAt = getBlockingRateLimitResetAt(mergedRateLimits, now)
   updateAccount(account.alias, {
     rateLimits: mergedRateLimits,
     limitStatus: 'success',
     limitError: undefined,
     lastLimitProbeAt: now,
-    limitsConfidence: calculateLimitsConfidence(now, account.lastLimitErrorAt, 'success'),
-    rateLimitedUntil: blockingResetAt,
-    authInvalid: false,
-    authInvalidatedAt: undefined
+    limitsConfidence: calculateLimitsConfidence(now, probeAccount.lastLimitErrorAt, 'success'),
+    rateLimitedUntil: blockingResetAt
   })
+  if (probe.validatedAccessToken) {
+    clearAuthInvalid(account.alias, probe.validatedAccessToken)
+  }
 
   logInfo(`Limits refreshed for ${account.alias} using model ${probe.probeModel || 'unknown'}, effort ${probe.probeEffort || 'default'}`)
   return { alias: account.alias, updated: true }

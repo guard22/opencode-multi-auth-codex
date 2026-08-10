@@ -23,6 +23,6 @@ export declare function markWorkspaceDeactivated(alias: string, cooldownMs: numb
     error?: string;
 }): void;
 export declare function clearWorkspaceDeactivated(alias: string): void;
-export declare function markAuthInvalid(alias: string): void;
-export declare function clearAuthInvalid(alias: string): void;
+export declare function markAuthInvalid(alias: string, expectedAccessToken: string): boolean;
+export declare function clearAuthInvalid(alias: string, expectedAccessToken: string): boolean;
 //# sourceMappingURL=rotation.d.ts.map

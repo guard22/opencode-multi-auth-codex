@@ -10,7 +10,7 @@ import {
   supportsFastMode,
   toCodexBackendUrl
 } from '../../src/codex-proxy.js'
-import { addAccount } from '../../src/store.js'
+import { addAccount, loadStore, updateAccount } from '../../src/store.js'
 import { DEFAULT_CONFIG } from '../../src/types.js'
 
 describe('codex proxy helpers', () => {
@@ -175,5 +175,56 @@ describe('codex proxy runtime', () => {
     const requestBody = JSON.parse(forwardedBody)
     expect(requestBody).not.toHaveProperty('verbosity')
     expect(requestBody.text).toEqual({ format: { type: 'json_object' } })
+  })
+
+  it('does not let a stale 401 invalidate credentials rotated in flight', async () => {
+    const claims = Buffer.from(JSON.stringify({
+      'https://api.openai.com/auth': { chatgpt_account_id: 'account-id' }
+    })).toString('base64url')
+    const oldAccessToken = `header.${claims}.old-signature`
+    const newAccessToken = `header.${claims}.new-signature`
+    addAccount('race', {
+      accessToken: oldAccessToken,
+      refreshToken: 'old-refresh-token',
+      expiresAt: Date.now() + 60 * 60_000
+    })
+
+    let notifyRequestStarted: (() => void) | undefined
+    const requestStarted = new Promise<void>((resolve) => {
+      notifyRequestStarted = resolve
+    })
+    let releaseResponse: (() => void) | undefined
+    const responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve
+    })
+    global.fetch = jest.fn(async () => {
+      notifyRequestStarted?.()
+      await responseGate
+      return new Response(JSON.stringify({
+        error: { message: 'Your authentication token has been invalidated.' }
+      }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }) as typeof fetch
+
+    const request = handleCodexProxyRequest('/responses', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gpt-5.5', input: 'hello' })
+    }, { config: DEFAULT_CONFIG })
+    await requestStarted
+    updateAccount('race', {
+      accessToken: newAccessToken,
+      refreshToken: 'new-refresh-token',
+      expiresAt: Date.now() + 60 * 60_000,
+      authInvalid: false,
+      authInvalidatedAt: undefined
+    })
+    releaseResponse?.()
+
+    await request
+
+    expect(loadStore().accounts.race.accessToken).toBe(newAccessToken)
+    expect(loadStore().accounts.race.authInvalid).toBe(false)
   })
 })

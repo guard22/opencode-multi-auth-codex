@@ -1,8 +1,8 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import { getNextAccount } from '../../src/rotation.js'
-import { loadStore, saveStore } from '../../src/store.js'
+import { clearAuthInvalid, getNextAccount, markAuthInvalid } from '../../src/rotation.js'
+import { loadStore, saveStore, updateAccount } from '../../src/store.js'
 import { updateSettings } from '../../src/settings.js'
 import { DEFAULT_CONFIG, type AccountCredentials } from '../../src/types.js'
 
@@ -140,5 +140,34 @@ describe('Rotation Strategy Runtime Behavior', () => {
     )
 
     expect(rotation).toBeNull()
+  })
+
+  it('does not invalidate credentials that changed after a failed request', () => {
+    const store = loadStore()
+    store.accounts.alpha = createAccount('alpha', 0)
+    saveStore(store)
+
+    expect(markAuthInvalid('alpha', 'stale-token')).toBe(false)
+    expect(loadStore().accounts.alpha.authInvalid).not.toBe(true)
+
+    expect(markAuthInvalid('alpha', 'token-alpha')).toBe(true)
+    expect(loadStore().accounts.alpha.authInvalid).toBe(true)
+  })
+
+  it('does not clear invalidation for credentials that changed after a successful request', () => {
+    const store = loadStore()
+    store.accounts.alpha = {
+      ...createAccount('alpha', 0),
+      authInvalid: true,
+      authInvalidatedAt: Date.now()
+    }
+    saveStore(store)
+    updateAccount('alpha', { accessToken: 'rotated-token' })
+
+    expect(clearAuthInvalid('alpha', 'token-alpha')).toBe(false)
+    expect(loadStore().accounts.alpha.authInvalid).toBe(true)
+
+    expect(clearAuthInvalid('alpha', 'rotated-token')).toBe(true)
+    expect(loadStore().accounts.alpha.authInvalid).toBe(false)
   })
 })
