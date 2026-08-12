@@ -58,9 +58,9 @@ export async function refreshRateLimitsForAccount(account: AccountCredentials): 
     if (usage.planType) {
       updates.planType = usage.planType
     }
-    if (typeof usage.rateLimitedUntil === 'number' && usage.rateLimitedUntil > now) {
-      updates.rateLimitedUntil = usage.rateLimitedUntil
-    }
+    updates.rateLimitedUntil = undefined
+    updates.modelUnsupportedUntil = undefined
+    updates.workspaceDeactivatedUntil = undefined
     updateAccount(account.alias, updates)
     clearAuthInvalid(account.alias, requestAccount.accessToken)
     logInfo(`Limits refreshed for ${account.alias} via usage API`)
@@ -117,7 +117,7 @@ export async function refreshRateLimitsForAccount(account: AccountCredentials): 
         })
       : undefined
     const rateLimitedUntil = parsedResetAt ?? fallbackResetAt
-    
+      
     const updates: Partial<AccountCredentials> = {
       limitStatus: 'error',
       limitError: errorText,
@@ -143,15 +143,17 @@ export async function refreshRateLimitsForAccount(account: AccountCredentials): 
   const mergedRateLimits = mergeRateLimits(probeAccount.rateLimits, probe.rateLimits)
   const blockingResetAt = getBlockingRateLimitResetAt(mergedRateLimits, now)
   updateAccount(account.alias, {
-    rateLimits: mergedRateLimits,
-    limitStatus: 'success',
-    limitError: undefined,
-    lastLimitProbeAt: now,
-    limitsConfidence: calculateLimitsConfidence(now, probeAccount.lastLimitErrorAt, 'success'),
-    rateLimitedUntil: blockingResetAt
+  rateLimits: mergedRateLimits,
+  limitStatus: 'success',
+  limitError: undefined,
+  lastLimitProbeAt: now,
+  limitsConfidence: calculateLimitsConfidence(now, probeAccount.lastLimitErrorAt, 'success'),
+  rateLimitedUntil: undefined,
+  modelUnsupportedUntil: undefined,
+  workspaceDeactivatedUntil: undefined
   })
   if (probe.validatedAccessToken) {
-    clearAuthInvalid(account.alias, probe.validatedAccessToken)
+  clearAuthInvalid(account.alias, probe.validatedAccessToken)
   }
 
   logInfo(`Limits refreshed for ${account.alias} using model ${probe.probeModel || 'unknown'}, effort ${probe.probeEffort || 'default'}`)
